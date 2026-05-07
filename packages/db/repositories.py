@@ -291,6 +291,28 @@ class ResearchRunRepository:
         await self._s.flush()
 
 
+    async def update_ticker_status(
+        self,
+        ticker_id: uuid.UUID,
+        status: TickerRunStatus,
+        error_message: str | None = None,
+    ) -> None:
+        values: dict[str, Any] = {
+            "status": status.value,
+            "updated_at": datetime.now(UTC),
+        }
+        if status == TickerRunStatus.RUNNING:
+            values["started_at"] = datetime.now(UTC)
+        if status in (TickerRunStatus.COMPLETED, TickerRunStatus.FAILED):
+            values["finished_at"] = datetime.now(UTC)
+        if error_message:
+            values["error_message"] = error_message
+        await self._s.execute(
+            update(ResearchRunTicker).where(ResearchRunTicker.id == ticker_id).values(**values)
+        )
+        await self._s.flush()
+
+
 class RecommendationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session

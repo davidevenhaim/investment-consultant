@@ -26,6 +26,10 @@ dependencies = [
     "httpx>=0.28.0",
     # Vector store
     "chromadb>=0.6.0",
+    # AI
+    "langgraph>=0.2.0",
+    # AI
+    "langchain-core>=0.3.0",
     # AI (used from M7+)
     "anthropic>=0.40.0",
     # Market data (used from M4+)
