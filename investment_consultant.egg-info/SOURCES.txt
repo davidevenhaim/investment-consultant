@@ -1,0 +1,7 @@
+pyproject.toml
+investment_consultant.egg-info/PKG-INFO
+investment_consultant.egg-info/SOURCES.txt
+investment_consultant.egg-info/dependency_links.txt
+investment_consultant.egg-info/requires.txt
+investment_consultant.egg-info/top_level.txt
+tests/test_health.py

@@ -1,0 +1,28 @@
+Metadata-Version: 2.4
+Name: investment-consultant
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.32.0
+Requires-Dist: pydantic>=2.10.0
+Requires-Dist: pydantic-settings>=2.7.0
+Requires-Dist: sqlalchemy>=2.0.0
+Requires-Dist: asyncpg>=0.30.0
+Requires-Dist: alembic>=1.14.0
+Requires-Dist: celery[redis]>=5.4.0
+Requires-Dist: redis>=5.2.0
+Requires-Dist: structlog>=24.4.0
+Requires-Dist: httpx>=0.28.0
+Requires-Dist: chromadb>=0.6.0
+Requires-Dist: anthropic>=0.40.0
+Requires-Dist: yfinance>=0.2.50
+Requires-Dist: pandas>=2.2.0
+Requires-Dist: pandas-ta>=0.3.14b0
+Requires-Dist: newsapi-python>=0.2.7
+Provides-Extra: dev
+Requires-Dist: ruff>=0.8.0; extra == "dev"
+Requires-Dist: mypy>=1.13.0; extra == "dev"
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24.0; extra == "dev"
+Requires-Dist: pytest-cov>=6.0.0; extra == "dev"
+Requires-Dist: httpx>=0.28.0; extra == "dev"

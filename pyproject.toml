@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "investment-consultant"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    # Web & API
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # Data validation
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    # Database
+    "sqlalchemy>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    # Task queue
+    "celery[redis]>=5.4.0",
+    "redis>=5.2.0",
+    # Logging
+    "structlog>=24.4.0",
+    # HTTP client
+    "httpx>=0.28.0",
+    # Vector store
+    "chromadb>=0.6.0",
+    # AI (used from M7+)
+    "anthropic>=0.40.0",
+    # Market data (used from M4+)
+    "yfinance>=0.2.50",
+    "pandas>=2.2.0",
+    "pandas-ta>=0.3.14b0",
+    # News (used from M8+)
+    "newsapi-python>=0.2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "ANN", "S", "B", "A", "COM", "C4", "RET", "SIM", "TCH", "PTH"]
+ignore = ["COM812", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "S"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "packages"
+strict = true
+ignore_missing_imports = true
+exclude = ["alembic/", "tests/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
