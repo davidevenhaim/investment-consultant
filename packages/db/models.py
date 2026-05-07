@@ -1,0 +1,350 @@
+"""All SQLAlchemy ORM models for the investment research system."""
+import uuid
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import TIMESTAMP as PGTIMESTAMP
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from db.base import Base, TimestampMixin, UUIDMixin
+from db.enums import AssetType, ResearchRunStatus, RiskLevel, TickerRunStatus
+
+__all__ = [
+    "StrategyVersion",
+    "PromptVersion",
+    "WatchlistSymbol",
+    "InvestorProfile",
+    "ResearchRun",
+    "ResearchRunTicker",
+    "NeutralRecommendation",
+    "PersonalizedRecommendation",
+    "RecommendationEvidence",
+    "JobEvent",
+    "AuditLog",
+]
+
+
+class StrategyVersion(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "strategy_versions"
+
+    version: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scoring_config_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    risk_policy_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # TODO: enforce at DB level with partial unique index:
+    #   CREATE UNIQUE INDEX uq_one_active_strategy
+    #   ON strategy_versions (is_active) WHERE is_active = true
+    # Currently enforced in StrategyVersionRepository.activate().
+
+
+class PromptVersion(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "prompt_versions"
+    __table_args__ = (UniqueConstraint("name", "version", name="uq_prompt_name_version"),)
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    output_schema_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class WatchlistSymbol(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "watchlist_symbols"
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
+    company_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    exchange: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    asset_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=AssetType.EQUITY.value
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class InvestorProfile(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "investor_profiles"
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="default")
+    risk_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=RiskLevel.MEDIUM.value
+    )
+    max_single_stock_weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.15)
+    max_new_position_weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.05)
+    max_drawdown_tolerance: Mapped[float] = mapped_column(Float, nullable=False, default=0.25)
+    min_confidence_to_buy: Mapped[float] = mapped_column(Float, nullable=False, default=0.65)
+    allow_margin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allow_options: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allow_shorting: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    investment_horizon: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="3-12_MONTHS"
+    )
+    extra_config_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class ResearchRun(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "research_runs"
+    __table_args__ = (
+        Index("ix_research_runs_status", "status"),
+        Index("ix_research_runs_run_type", "run_type"),
+        Index("ix_research_runs_created_at", "created_at"),
+    )
+
+    run_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=ResearchRunStatus.CREATED.value
+    )
+    strategy_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("strategy_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("prompt_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(PGTIMESTAMP(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(PGTIMESTAMP(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    tickers: Mapped[list["ResearchRunTicker"]] = relationship(
+        "ResearchRunTicker", back_populates="run", cascade="all, delete-orphan"
+    )
+    strategy_version: Mapped["StrategyVersion | None"] = relationship("StrategyVersion")
+    prompt_version: Mapped["PromptVersion | None"] = relationship("PromptVersion")
+
+
+class ResearchRunTicker(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "research_run_tickers"
+    __table_args__ = (
+        UniqueConstraint("research_run_id", "symbol", name="uq_run_ticker_symbol"),
+        Index("ix_run_tickers_run_id", "research_run_id"),
+        Index("ix_run_tickers_symbol", "symbol"),
+        Index("ix_run_tickers_status", "status"),
+    )
+
+    research_run_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("research_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=TickerRunStatus.CREATED.value
+    )
+    started_at: Mapped[datetime | None] = mapped_column(PGTIMESTAMP(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(PGTIMESTAMP(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    run: Mapped["ResearchRun"] = relationship("ResearchRun", back_populates="tickers")
+
+
+class NeutralRecommendation(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "neutral_recommendations"
+    __table_args__ = (
+        CheckConstraint("score >= 0 AND score <= 100", name="chk_neutral_rec_score"),
+        CheckConstraint(
+            "confidence >= 0.0 AND confidence <= 1.0", name="chk_neutral_rec_confidence"
+        ),
+        CheckConstraint(
+            "data_quality_score IS NULL OR"
+            " (data_quality_score >= 0.0 AND data_quality_score <= 1.0)",
+            name="chk_neutral_rec_dq",
+        ),
+        Index("ix_neutral_rec_symbol", "symbol"),
+        Index("ix_neutral_rec_action", "action"),
+        Index("ix_neutral_rec_as_of_time", "as_of_time"),
+        Index("ix_neutral_rec_run_id", "research_run_id"),
+    )
+
+    research_run_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("research_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    research_run_ticker_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("research_run_tickers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    time_horizon: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    score_breakdown_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    what_changed_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    main_reasons_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    main_risks_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    missing_details_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    final_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("strategy_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("prompt_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    as_of_time: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    # Populated from market_prices table in M4. Do not call yfinance directly here.
+    price_at_recommendation: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    data_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    run: Mapped["ResearchRun"] = relationship("ResearchRun")
+
+
+class PersonalizedRecommendation(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "personalized_recommendations"
+    __table_args__ = (
+        Index("ix_personal_rec_symbol", "symbol"),
+        Index("ix_personal_rec_action", "personal_action"),
+    )
+
+    neutral_recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("neutral_recommendations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    investor_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("investor_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # portfolio_snapshot_id — no FK yet; portfolio_snapshots table added in M9
+    portfolio_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    personal_action: Mapped[str] = mapped_column(String(30), nullable=False)
+    position_sizing_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    policy_checks_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    current_position_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_allowed_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    personal_reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    neutral: Mapped["NeutralRecommendation"] = relationship("NeutralRecommendation")
+    investor_profile: Mapped["InvestorProfile | None"] = relationship("InvestorProfile")
+
+
+class RecommendationEvidence(Base, UUIDMixin):
+    """Evidence for a recommendation.
+
+    recommendation_id has NO FK constraint intentionally: it may reference
+    either neutral_recommendations.id or personalized_recommendations.id.
+    Use recommendation_type to determine which table to look in.
+    """
+
+    __tablename__ = "recommendation_evidence"
+    __table_args__ = (
+        Index("ix_evidence_rec_id", "recommendation_id"),
+        Index("ix_evidence_rec_type", "recommendation_type"),
+    )
+
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    recommendation_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(PGTIMESTAMP(timezone=True), nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class JobEvent(Base, UUIDMixin):
+    __tablename__ = "job_events"
+    __table_args__ = (
+        Index("ix_job_events_entity", "entity_type", "entity_id"),
+        Index("ix_job_events_event_type", "event_type"),
+        Index("ix_job_events_correlation_id", "correlation_id"),
+        Index("ix_job_events_created_at", "created_at"),
+    )
+
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    correlation_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuditLog(Base, UUIDMixin):
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_logs_entity", "entity_type", "entity_id"),
+        Index("ix_audit_logs_event_type", "event_type"),
+        Index("ix_audit_logs_actor", "actor"),
+        Index("ix_audit_logs_correlation_id", "correlation_id"),
+        Index("ix_audit_logs_created_at", "created_at"),
+    )
+
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False, default="system")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    correlation_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )

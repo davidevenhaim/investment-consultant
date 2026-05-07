@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 router = APIRouter(tags=["health"])
 logger = get_logger(__name__)
 
+OverallStatus = Literal["ok", "degraded", "error"]
+
 
 class ServiceHealth(BaseModel):
     status: Literal["ok", "error"]
@@ -24,7 +26,7 @@ class ServiceHealth(BaseModel):
 
 
 class DetailedHealthResponse(BaseModel):
-    status: Literal["ok", "degraded", "error"]
+    status: OverallStatus
     version: str = "0.1.0"
     services: dict[str, ServiceHealth]
 
@@ -52,7 +54,7 @@ async def _check_postgres(settings: Settings) -> ServiceHealth:
 async def _check_redis(settings: Settings) -> ServiceHealth:
     t0 = time.monotonic()
     try:
-        r = aioredis.from_url(settings.redis_url, socket_connect_timeout=3)
+        r = aioredis.from_url(settings.redis_url, socket_connect_timeout=3)  # type: ignore[no-untyped-call]
         await r.ping()
         await r.aclose()
         return ServiceHealth(status="ok", latency_ms=round((time.monotonic() - t0) * 1000, 1))
@@ -99,7 +101,7 @@ async def health_detailed(request: Request) -> dict[str, Any]:
 
     all_ok = all(s.status == "ok" for s in services.values())
     any_error = any(s.status == "error" for s in services.values())
-    overall = "ok" if all_ok else ("error" if any_error else "degraded")
+    overall: OverallStatus = "ok" if all_ok else ("error" if any_error else "degraded")
 
     response = DetailedHealthResponse(status=overall, services=services)
 

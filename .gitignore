@@ -1,0 +1,39 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Celery
+celerybeat-schedule*
+*.db
+*.sqlite3
+
+# Alembic/Python cache
+alembic/__pycache__/
+alembic/versions/__pycache__/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Node / UI
+node_modules/
+.next/
+dist/
+build/
+coverage/
+pnpm-lock.yaml.tmp

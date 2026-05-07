@@ -8,21 +8,21 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Make packages importable
 sys.path.insert(0, str(Path(__file__).parent.parent / "packages"))
 
-from core.config import get_settings  # noqa: E402
+from db.base import Base  # noqa: E402
+import db.models  # noqa: E402, F401 — registers all models on Base.metadata
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override sqlalchemy.url from settings so Docker env vars work
-settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Only set URL from settings if not already overridden (e.g., by tests or CLI --url)
+if not config.get_main_option("sqlalchemy.url", None):
+    from core.config import get_settings  # noqa: E402
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
-# Import all models here as they are created (M2+)
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:

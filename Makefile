@@ -1,46 +1,69 @@
-.PHONY: up down migrate test lint format logs shell-api run build
+.PHONY: up down migrate migrate-local seed test lint format logs shell-api run build venv install
+
+PYTHON    := python3.12
+VENV      := .venv
+BIN       := $(VENV)/bin
+COMPOSE   := docker compose -f $(shell pwd)/docker-compose.yml --project-directory $(shell pwd)
 
 export PYTHONPATH := $(shell pwd)/packages
 
+$(VENV):
+	$(PYTHON) -m venv $(VENV)
+	$(BIN)/pip install --quiet --upgrade pip
+	$(BIN)/pip install --quiet -e ".[dev]"
+
+venv: $(VENV)
+
+install: venv
+
 up:
-	docker compose up -d
+	$(COMPOSE) up -d
 
 down:
-	docker compose down
+	$(COMPOSE) down
 
 build:
-	docker compose build
+	$(COMPOSE) build
 
 migrate:
-	docker compose exec api alembic upgrade head
+	$(COMPOSE) exec api alembic upgrade head
 
-test:
-	PYTHONPATH=$(PYTHONPATH) pytest tests/ -v --cov=packages --cov=apps --cov-report=term-missing
+migrate-local:
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/alembic upgrade head
 
-lint:
-	PYTHONPATH=$(PYTHONPATH) ruff check packages/ apps/ tests/
-	PYTHONPATH=$(PYTHONPATH) mypy packages/ apps/ --ignore-missing-imports
+seed:
+	$(COMPOSE) exec api python -m apps.cli.seed
 
-format:
-	ruff format packages/ apps/ tests/
+seed-local:
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/python apps/cli/seed.py
+
+test: $(VENV)
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/pytest tests/ -v --cov=packages --cov=apps --cov-report=term-missing
+
+lint: $(VENV)
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/ruff check packages/ apps/ tests/
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/mypy packages/ apps/ --ignore-missing-imports
+
+format: $(VENV)
+	$(BIN)/ruff format packages/ apps/ tests/
 
 logs:
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 logs-api:
-	docker compose logs -f api
+	$(COMPOSE) logs -f api
 
 logs-worker:
-	docker compose logs -f worker beat
+	$(COMPOSE) logs -f worker beat
 
 shell-api:
-	docker compose exec api bash
+	$(COMPOSE) exec api bash
 
 shell-worker:
-	docker compose exec worker bash
+	$(COMPOSE) exec worker bash
 
 run:
-	docker compose exec api python -m apps.cli.run
+	$(COMPOSE) exec api python -m apps.cli.run
 
 ps:
-	docker compose ps
+	$(COMPOSE) ps

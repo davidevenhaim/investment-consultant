@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from apps.api.middleware.correlation import CorrelationIDMiddleware
-from apps.api.routers import health
+from apps.api.routers import health, recommendations, research_runs, risk_profile, watchlist
 
 logger = get_logger(__name__)
 
@@ -20,6 +20,8 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     setup_logging(settings.log_level)
+    from db.session import init_db
+    init_db(settings.database_url)
     logger.info("api_starting", environment=settings.environment, version="0.1.0")
     yield
     logger.info("api_stopping")
@@ -56,14 +58,8 @@ async def app_error_handler(request: Request, exc: InvestmentConsultantError) ->
     return JSONResponse(
         status_code=exc.status_code,
         content={
-            "error": {
-                "code": exc.error_code,
-                "message": exc.message,
-                "detail": exc.detail,
-            },
-            "meta": {
-                "request_id": correlation_id,
-            },
+            "error": {"code": exc.error_code, "message": exc.message, "detail": exc.detail},
+            "meta": {"request_id": correlation_id},
         },
     )
 
@@ -86,6 +82,10 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(watchlist.router, prefix="/api/v1")
+app.include_router(risk_profile.router, prefix="/api/v1")
+app.include_router(research_runs.router, prefix="/api/v1")
+app.include_router(recommendations.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)
