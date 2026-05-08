@@ -11,7 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from apps.api.middleware.correlation import CorrelationIDMiddleware
-from apps.api.routers import health, recommendations, research_runs, risk_profile, watchlist
+from apps.api.routers import (
+    health,
+    market_data,
+    recommendations,
+    research_runs,
+    risk_profile,
+    watchlist,
+)
 
 logger = get_logger(__name__)
 
@@ -86,6 +93,7 @@ app.include_router(watchlist.router, prefix="/api/v1")
 app.include_router(risk_profile.router, prefix="/api/v1")
 app.include_router(research_runs.router, prefix="/api/v1")
 app.include_router(recommendations.router, prefix="/api/v1")
+app.include_router(market_data.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

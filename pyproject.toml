@@ -62,7 +62,7 @@ select = ["E", "F", "I", "N", "UP", "ANN", "S", "B", "A", "COM", "C4", "RET", "S
 ignore = ["COM812", "S101", "ANN401", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "S"]
+"tests/**" = ["ANN", "S", "E501"]
 
 [tool.mypy]
 python_version = "3.12"

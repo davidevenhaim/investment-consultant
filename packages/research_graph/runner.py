@@ -5,6 +5,7 @@ from typing import Any
 from core.logging import get_logger
 from db.enums import TickerRunStatus
 from db.models import ResearchRun, ResearchRunTicker
+from market_data.interfaces import MarketDataProvider
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from research_graph.graph import build_graph_for_session
@@ -51,12 +52,14 @@ async def run_research_for_run(
     tickers: list[ResearchRunTicker],
     session: AsyncSession,
     strategy_version: str,
+    provider: MarketDataProvider | None = None,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
     Updates each ticker's status in DB. Returns a summary dict.
+    `provider` may be injected for testing; defaults to YFinanceProvider.
     """
-    graph = build_graph_for_session(session)
+    graph = build_graph_for_session(session, provider)
 
     results: dict[str, Any] = {"symbols_completed": [], "symbols_failed": [], "errors": []}
 

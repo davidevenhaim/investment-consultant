@@ -1,6 +1,7 @@
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -75,11 +76,15 @@ async def api_client(db_session: AsyncSession) -> AsyncGenerator:
     from httpx import ASGITransport, AsyncClient
 
     from apps.api.main import app
+    from tests.market_data.conftest import MockProvider
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
+    _mock_provider = MockProvider()
+
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client
+    with patch("market_data.service._default_provider", return_value=_mock_provider):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            yield client
     app.dependency_overrides.pop(get_db, None)

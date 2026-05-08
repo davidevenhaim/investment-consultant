@@ -38,6 +38,10 @@ def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any
             sv = await sv_repo.get_by_version(state["strategy_version"])
             sv_id = sv.id if sv else None
 
+            # Derive latest close for price_at_recommendation
+            signals = state.get("technical_signals") or {}
+            price_at_rec: float | None = signals.get("latest_close")
+
             # Persist neutral recommendation
             neutral_rec_id: uuid.UUID | None = None
             if neutral is not None:
@@ -56,6 +60,7 @@ def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any
                     final_reason=neutral.final_reason,
                     strategy_version_id=sv_id,
                     as_of_time=state["as_of_time"],
+                    price_at_recommendation=price_at_rec,
                     data_quality_score=neutral.data_quality_score,
                 )
                 session.add(nr)

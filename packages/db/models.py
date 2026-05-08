@@ -1,11 +1,14 @@
 """All SQLAlchemy ORM models for the investment research system."""
+import datetime as dt
 import uuid
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     Float,
     ForeignKey,
     Index,
@@ -26,6 +29,7 @@ from db.base import Base, TimestampMixin, UUIDMixin
 from db.enums import AssetType, ResearchRunStatus, RiskLevel, TickerRunStatus
 
 __all__ = [
+    "MarketPrice",
     "StrategyVersion",
     "PromptVersion",
     "WatchlistSymbol",
@@ -38,6 +42,29 @@ __all__ = [
     "JobEvent",
     "AuditLog",
 ]
+
+
+class MarketPrice(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "market_prices"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "price_date", "provider",
+            name="uq_market_price_symbol_date_provider",
+        ),
+        Index("ix_market_prices_symbol_date", "symbol", "price_date"),
+        Index("ix_market_prices_symbol", "symbol"),
+        Index("ix_market_prices_date", "price_date"),
+    )
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    price_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    open: Mapped[float] = mapped_column(Numeric(15, 4), nullable=False)
+    high: Mapped[float] = mapped_column(Numeric(15, 4), nullable=False)
+    low: Mapped[float] = mapped_column(Numeric(15, 4), nullable=False)
+    close: Mapped[float] = mapped_column(Numeric(15, 4), nullable=False)
+    adjusted_close: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="yfinance")
 
 
 class StrategyVersion(Base, UUIDMixin, TimestampMixin):

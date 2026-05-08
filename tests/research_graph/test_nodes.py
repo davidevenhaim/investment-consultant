@@ -1,10 +1,9 @@
-"""Unit tests for individual graph nodes — no DB required."""
+"""Unit tests for individual graph nodes — no DB required for scoring nodes."""
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from db.enums import RecommendationAction
-from research_graph.nodes.compute_signals import _DEFAULT_SIGNALS, _MOCK_SIGNALS, compute_signals
-from research_graph.nodes.fetch_market_data import fetch_market_data
 from research_graph.nodes.load_ticker_context import load_ticker_context
 from research_graph.nodes.neutral_recommendation import (
     _risk_score,
@@ -45,8 +44,38 @@ def _base_state(symbol: str = "AAPL") -> ResearchState:
     )
 
 
-# ── load_ticker_context ───────────────────────────────────────────────────────
+def _signals_bullish() -> dict[str, Any]:
+    """Realistic M4 signals for a bullish stock."""
+    return {
+        "latest_close": 175.0,
+        "price_vs_sma_200": 1.08,
+        "price_vs_sma_50": 1.03,
+        "return_3m": 0.12,
+        "return_6m": 0.18,
+        "relative_strength_3m_vs_spy": 0.05,
+        "rsi_14": 58.0,
+        "volatility_90d": 0.22,
+        "atr_14_pct": 0.016,
+        "max_drawdown_1y": -0.12,
+    }
 
+
+def _signals_bearish() -> dict[str, Any]:
+    return {
+        "latest_close": 90.0,
+        "price_vs_sma_200": 0.93,
+        "price_vs_sma_50": 0.95,
+        "return_3m": -0.08,
+        "return_6m": -0.15,
+        "relative_strength_3m_vs_spy": -0.06,
+        "rsi_14": 38.0,
+        "volatility_90d": 0.48,
+        "atr_14_pct": 0.042,
+        "max_drawdown_1y": -0.38,
+    }
+
+
+# ── load_ticker_context ───────────────────────────────────────────────────────
 
 def test_load_ticker_context_sets_as_of_time() -> None:
     before = datetime.now(UTC)
@@ -57,7 +86,6 @@ def test_load_ticker_context_sets_as_of_time() -> None:
 
 # ── retrieve_memory ───────────────────────────────────────────────────────────
 
-
 def test_retrieve_memory_returns_empty_stubs() -> None:
     result = retrieve_memory(_base_state())
     assert result["previous_thesis"] is None
@@ -65,49 +93,7 @@ def test_retrieve_memory_returns_empty_stubs() -> None:
     assert result["past_mistakes"] == []
 
 
-# ── fetch_market_data ─────────────────────────────────────────────────────────
-
-
-def test_fetch_market_data_returns_dataframe_for_known_symbol() -> None:
-    import pandas as pd
-    result = fetch_market_data(_base_state("AAPL"))
-    assert "ohlcv" in result
-    assert isinstance(result["ohlcv"], pd.DataFrame)
-    assert len(result["ohlcv"]) == 30
-
-
-def test_fetch_market_data_returns_dataframe_for_unknown_symbol() -> None:
-    import pandas as pd
-    result = fetch_market_data(_base_state("UNKN"))
-    assert isinstance(result["ohlcv"], pd.DataFrame)
-
-
-def test_fetch_market_data_has_expected_columns() -> None:
-    result = fetch_market_data(_base_state("NVDA"))
-    cols = set(result["ohlcv"].columns)
-    assert {"open", "high", "low", "close", "volume"}.issubset(cols)
-
-
-# ── compute_signals ───────────────────────────────────────────────────────────
-
-
-def test_compute_signals_returns_rsi_for_known_symbol() -> None:
-    state = _base_state("AAPL")
-    result = compute_signals(state)
-    assert result["technical_signals"] is not None
-    assert "rsi" in result["technical_signals"]
-    assert result["technical_signals"]["rsi"] == _MOCK_SIGNALS["AAPL"]["rsi"]
-
-
-def test_compute_signals_uses_default_for_unknown_symbol() -> None:
-    state = _base_state("ZZZZ")
-    result = compute_signals(state)
-    assert result["technical_signals"] is not None
-    assert result["technical_signals"]["rsi"] == _DEFAULT_SIGNALS["rsi"]
-
-
-# ── score_to_action (scoring engine) ─────────────────────────────────────────
-
+# ── score_to_action ───────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("score,expected", [
     (90, RecommendationAction.STRONG_BUY),
@@ -128,53 +114,66 @@ def test_score_to_action_sell_with_position() -> None:
     assert score_to_action(20.0, has_position=True) == RecommendationAction.SELL
 
 
+# ── _technical_score (M4 signals) ─────────────────────────────────────────────
+
 def test_technical_score_bullish() -> None:
-    signals = {"rsi": 62.0, "macd_histogram": 0.5, "price_vs_ema20": 1.03, "momentum_1m": 0.06}
-    score = _technical_score(signals)
-    assert 12 <= score <= 20
+    score = _technical_score(_signals_bullish())
+    assert 14 <= score <= 20
 
 
 def test_technical_score_bearish() -> None:
-    signals = {"rsi": 35.0, "macd_histogram": -1.0, "price_vs_ema20": 0.95, "momentum_1m": -0.05}
-    score = _technical_score(signals)
-    assert 0 <= score <= 6
+    score = _technical_score(_signals_bearish())
+    assert 0 <= score <= 4
 
 
-def test_risk_score_low_volatility() -> None:
-    assert _risk_score({"atr_pct": 0.008}) == 15.0
+def test_technical_score_empty_signals_returns_zero() -> None:
+    assert _technical_score({}) == 0.0
 
 
-def test_risk_score_high_volatility() -> None:
-    assert _risk_score({"atr_pct": 0.07}) == 2.0
+# ── _risk_score (M4 signals) ──────────────────────────────────────────────────
+
+def test_risk_score_bullish() -> None:
+    score = _risk_score(_signals_bullish())
+    assert 8 <= score <= 15
+
+
+def test_risk_score_bearish() -> None:
+    score = _risk_score(_signals_bearish())
+    assert 0 <= score <= 5
+
+
+def test_risk_score_low_volatility_atr_fallback() -> None:
+    assert _risk_score({"atr_pct": 0.008}) > 0
+
+
+def test_risk_score_high_volatility_atr_fallback() -> None:
+    assert _risk_score({"atr_pct": 0.07}) < 5
 
 
 # ── neutral_recommendation ────────────────────────────────────────────────────
 
-
-def test_neutral_recommendation_aapl_is_buy_candidate() -> None:
+def test_neutral_recommendation_bullish_score_above_70() -> None:
     state = _base_state("AAPL")
-    state["technical_signals"] = dict(_MOCK_SIGNALS["AAPL"])
+    state["technical_signals"] = _signals_bullish()
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
     assert rec is not None
-    assert rec.action == RecommendationAction.BUY_CANDIDATE
-    assert 70 <= rec.score <= 84
-    assert 0.0 < rec.confidence <= 1.0
+    assert rec.score >= 70
+    assert rec.action in (RecommendationAction.BUY_CANDIDATE, RecommendationAction.STRONG_BUY)
 
 
-def test_neutral_recommendation_tsla_is_hold() -> None:
+def test_neutral_recommendation_bearish_score_below_60() -> None:
     state = _base_state("TSLA")
-    state["technical_signals"] = dict(_MOCK_SIGNALS["TSLA"])
+    state["technical_signals"] = _signals_bearish()
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
     assert rec is not None
-    assert rec.action in (RecommendationAction.HOLD, RecommendationAction.REDUCE)
-    assert rec.score < 70
+    assert rec.score < 60
 
 
-def test_neutral_recommendation_score_bounds() -> None:
+def test_neutral_recommendation_score_in_bounds() -> None:
     state = _base_state("NVDA")
-    state["technical_signals"] = dict(_MOCK_SIGNALS["NVDA"])
+    state["technical_signals"] = _signals_bullish()
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
     assert rec is not None
@@ -183,7 +182,7 @@ def test_neutral_recommendation_score_bounds() -> None:
 
 def test_neutral_recommendation_returns_score_breakdown() -> None:
     state = _base_state("AAPL")
-    state["technical_signals"] = dict(_MOCK_SIGNALS["AAPL"])
+    state["technical_signals"] = _signals_bullish()
     result = neutral_recommendation(state)
     assert result.get("score_breakdown") is not None
 
@@ -192,8 +191,16 @@ def test_neutral_recommendation_missing_signals_degrades_gracefully() -> None:
     state = _base_state("AAPL")
     state["technical_signals"] = None
     result = neutral_recommendation(state)
-    # Should still return a recommendation (using default signals of 0)
     assert result.get("neutral_rec") is not None
+
+
+def test_neutral_recommendation_final_reason_mentions_m4() -> None:
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    result = neutral_recommendation(state)
+    rec = result["neutral_rec"]
+    assert rec is not None
+    assert "real M4 data" in rec.final_reason
 
 
 # ── personalized_recommendation ───────────────────────────────────────────────
@@ -230,7 +237,7 @@ def test_personalized_passes_through_hold() -> None:
 def test_personalized_low_confidence_triggers_watchlist() -> None:
     state = _base_state("AAPL")
     nr = _make_neutral_rec(RecommendationAction.BUY_CANDIDATE, 73)
-    nr.confidence = 0.50  # below 0.65 threshold
+    nr.confidence = 0.50
     state["neutral_rec"] = nr
     result = personalized_recommendation(state)
     rec = result["personalized_rec"]

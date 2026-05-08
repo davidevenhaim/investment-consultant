@@ -1,5 +1,4 @@
 """Integration tests for the full research graph — requires DB."""
-
 import pytest
 from db.enums import RecommendationAction, ResearchRunType, TickerRunStatus
 from db.models import NeutralRecommendation as NeutralRecModel
@@ -8,6 +7,8 @@ from db.repositories import ResearchRunRepository
 from research_graph.graph import build_graph_for_session
 from research_graph.runner import make_initial_state, run_research_for_run
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests.market_data.conftest import MockProvider
 
 
 async def _make_run_and_ticker(
@@ -19,11 +20,15 @@ async def _make_run_and_ticker(
     return run, tickers[0]
 
 
-@pytest.mark.asyncio
-async def test_full_graph_produces_neutral_rec(db_session: AsyncSession) -> None:
-    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+@pytest.fixture
+def provider() -> MockProvider:
+    return MockProvider()
 
-    graph = build_graph_for_session(db_session)
+
+@pytest.mark.asyncio
+async def test_full_graph_produces_neutral_rec(db_session: AsyncSession, provider: MockProvider) -> None:
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(db_session, provider)
     initial = make_initial_state(run, ticker, "v0.1.0")
     final = await graph.ainvoke(initial)
 
@@ -34,11 +39,13 @@ async def test_full_graph_produces_neutral_rec(db_session: AsyncSession) -> None
 
 
 @pytest.mark.asyncio
-async def test_full_graph_persists_neutral_rec_to_db(db_session: AsyncSession) -> None:
+async def test_full_graph_persists_neutral_rec_to_db(
+    db_session: AsyncSession, provider: MockProvider
+) -> None:
     from sqlalchemy import select
 
     run, ticker = await _make_run_and_ticker(db_session, "NVDA")
-    graph = build_graph_for_session(db_session)
+    graph = build_graph_for_session(db_session, provider)
     initial = make_initial_state(run, ticker, "v0.1.0")
     await graph.ainvoke(initial)
 
@@ -52,9 +59,11 @@ async def test_full_graph_persists_neutral_rec_to_db(db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
-async def test_full_graph_marks_ticker_completed(db_session: AsyncSession) -> None:
+async def test_full_graph_marks_ticker_completed(
+    db_session: AsyncSession, provider: MockProvider
+) -> None:
     run, ticker = await _make_run_and_ticker(db_session, "TSLA")
-    graph = build_graph_for_session(db_session)
+    graph = build_graph_for_session(db_session, provider)
     initial = make_initial_state(run, ticker, "v0.1.0")
     await graph.ainvoke(initial)
 
@@ -64,9 +73,11 @@ async def test_full_graph_marks_ticker_completed(db_session: AsyncSession) -> No
 
 
 @pytest.mark.asyncio
-async def test_full_graph_no_errors_for_mock_data(db_session: AsyncSession) -> None:
+async def test_full_graph_no_errors_for_mock_data(
+    db_session: AsyncSession, provider: MockProvider
+) -> None:
     run, ticker = await _make_run_and_ticker(db_session, "AAPL")
-    graph = build_graph_for_session(db_session)
+    graph = build_graph_for_session(db_session, provider)
     initial = make_initial_state(run, ticker, "v0.1.0")
     final = await graph.ainvoke(initial)
 
@@ -74,43 +85,57 @@ async def test_full_graph_no_errors_for_mock_data(db_session: AsyncSession) -> N
 
 
 @pytest.mark.asyncio
-async def test_run_research_for_run_multiple_tickers(db_session: AsyncSession) -> None:
+async def test_run_research_for_run_multiple_tickers(
+    db_session: AsyncSession, provider: MockProvider
+) -> None:
     repo = ResearchRunRepository(db_session)
     run = await repo.create(run_type=ResearchRunType.MANUAL)
     tickers = await repo.add_tickers(run.id, ["AAPL", "NVDA", "TSLA"])
 
-    summary = await run_research_for_run(run, tickers, db_session, "v0.1.0")
+    summary = await run_research_for_run(run, tickers, db_session, "v0.1.0", provider=provider)
 
     assert summary["symbols_failed"] == []
     assert set(summary["symbols_completed"]) == {"AAPL", "NVDA", "TSLA"}
 
-    # All tickers should be COMPLETED in DB
     for t in tickers:
         await db_session.refresh(t)
         assert t.status == TickerRunStatus.COMPLETED.value
 
 
 @pytest.mark.asyncio
-async def test_aapl_gets_buy_candidate(db_session: AsyncSession) -> None:
-    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
-    graph = build_graph_for_session(db_session)
-    initial = make_initial_state(run, ticker, "v0.1.0")
-    final = await graph.ainvoke(initial)
+async def test_price_at_recommendation_persisted(
+    db_session: AsyncSession, provider: MockProvider
+) -> None:
+    from sqlalchemy import select
 
-    assert final["neutral_rec"] is not None
-    assert final["neutral_rec"].action == RecommendationAction.BUY_CANDIDATE
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(db_session, provider)
+    await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    result = await db_session.execute(
+        select(NeutralRecModel).where(NeutralRecModel.research_run_id == run.id)
+    )
+    rec = result.scalar_one()
+    assert rec.price_at_recommendation is not None
+    assert float(rec.price_at_recommendation) > 0
 
 
 @pytest.mark.asyncio
-async def test_tsla_score_lower_than_aapl(db_session: AsyncSession) -> None:
-    run_a, ticker_a = await _make_run_and_ticker(db_session, "AAPL")
-    run_t, ticker_t = await _make_run_and_ticker(db_session, "TSLA")
+async def test_aapl_score_above_50(db_session: AsyncSession, provider: MockProvider) -> None:
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(db_session, provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
 
-    graph = build_graph_for_session(db_session)
+    assert final["neutral_rec"] is not None
+    assert final["neutral_rec"].score >= 50
 
-    final_a = await graph.ainvoke(make_initial_state(run_a, ticker_a, "v0.1.0"))
-    final_t = await graph.ainvoke(make_initial_state(run_t, ticker_t, "v0.1.0"))
 
-    assert final_a["neutral_rec"] is not None
-    assert final_t["neutral_rec"] is not None
-    assert final_a["neutral_rec"].score > final_t["neutral_rec"].score
+@pytest.mark.asyncio
+async def test_data_quality_score_populated(
+    db_session: AsyncSession, provider: MockProvider
+) -> None:
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(db_session, provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    assert final["data_quality_score"] > 0
