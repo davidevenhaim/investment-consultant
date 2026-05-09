@@ -70,6 +70,10 @@ class MarketDataError(ExternalServiceError):
     error_code = "MARKET_DATA_ERROR"
 
 
+class FundamentalsDataError(ExternalServiceError):
+    error_code = "FUNDAMENTALS_DATA_ERROR"
+
+
 class NewsAPIError(ExternalServiceError):
     error_code = "NEWS_API_ERROR"
 

@@ -81,10 +81,14 @@ async def api_client(db_session: AsyncSession) -> AsyncGenerator:
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
-    _mock_provider = MockProvider()
+    _mock_market_provider = MockProvider()
+
+    from tests.fundamentals.conftest import MockFundamentalsProvider
+    _mock_fund_provider = MockFundamentalsProvider()
 
     app.dependency_overrides[get_db] = override_get_db
-    with patch("market_data.service._default_provider", return_value=_mock_provider):
+    with patch("market_data.service._default_provider", return_value=_mock_market_provider), \
+         patch("fundamentals.service._default_provider", return_value=_mock_fund_provider):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client
     app.dependency_overrides.pop(get_db, None)

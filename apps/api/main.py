@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from apps.api.middleware.correlation import CorrelationIDMiddleware
 from apps.api.routers import (
+    fundamentals,
     health,
     market_data,
     recommendations,
@@ -94,6 +95,7 @@ app.include_router(risk_profile.router, prefix="/api/v1")
 app.include_router(research_runs.router, prefix="/api/v1")
 app.include_router(recommendations.router, prefix="/api/v1")
 app.include_router(market_data.router, prefix="/api/v1")
+app.include_router(fundamentals.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

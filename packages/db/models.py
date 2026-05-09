@@ -30,6 +30,7 @@ from db.enums import AssetType, ResearchRunStatus, RiskLevel, TickerRunStatus
 
 __all__ = [
     "MarketPrice",
+    "CompanyFundamentals",
     "StrategyVersion",
     "PromptVersion",
     "WatchlistSymbol",
@@ -65,6 +66,45 @@ class MarketPrice(Base, UUIDMixin, TimestampMixin):
     adjusted_close: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
     volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, default="yfinance")
+
+
+class CompanyFundamentals(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "company_fundamentals"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "as_of_date", "provider",
+            name="uq_company_fundamentals_symbol_date_provider",
+        ),
+        Index("ix_company_fundamentals_symbol_date", "symbol", "as_of_date"),
+        Index("ix_company_fundamentals_symbol", "symbol"),
+        Index("ix_company_fundamentals_date", "as_of_date"),
+        Index("ix_company_fundamentals_provider", "provider"),
+    )
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    as_of_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="yfinance")
+    market_cap: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    trailing_pe: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    forward_pe: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    price_to_book: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    price_to_sales: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    enterprise_to_revenue: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    enterprise_to_ebitda: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    revenue_growth: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    earnings_growth: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    profit_margins: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    gross_margins: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    operating_margins: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    return_on_equity: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    debt_to_equity: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    current_ratio: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    free_cashflow: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    total_cash: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    total_debt: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
 
 class StrategyVersion(Base, UUIDMixin, TimestampMixin):

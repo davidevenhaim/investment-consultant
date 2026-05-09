@@ -15,12 +15,18 @@ from pydantic import BaseModel, Field
 
 class ScoreBreakdown(BaseModel):
     technical_score: float = 0.0
-    fundamental_score: float = 0.0  # stub until M4
-    valuation_score: float = 0.0    # stub until M4
+    fundamental_score: float = 0.0
+    valuation_score: float = 0.0
     news_score: float = 0.0         # stub until M8
     portfolio_fit_score: float = 0.0  # stub until M9
     risk_score: float = 0.0
     total_score: float = 0.0
+    # M5 completeness metadata
+    recommendation_scope: str = "UNKNOWN"
+    analysis_completeness_score: float = 0.0
+    completed_components: list[str] = []
+    missing_components: list[str] = []
+    component_quality_scores: dict[str, float] = {}
 
 
 class NeutralRecState(BaseModel):
@@ -107,6 +113,7 @@ class ResearchState(TypedDict):
     as_of_time: datetime
     strategy_version: str
     prompt_version: str
+    strategy_config: dict[str, Any]  # scoring config loaded from strategy_versions table
 
     # ── retrieved memory (M6+) ───────────────────────────────────────────────
     previous_thesis: str | None
@@ -126,9 +133,18 @@ class ResearchState(TypedDict):
     missing_details: MissingDetailsResult | None
     bull_bear_case: BullBearCase | None
 
+    # ── fundamentals (M5+) ──────────────────────────────────────────────────
+    fundamentals_snapshot: Any  # CompanyFundamentalsSnapshot | None — deferred import
+    fundamentals_data_quality: float
+
     # ── scoring ──────────────────────────────────────────────────────────────
     score_breakdown: ScoreBreakdown | None
     neutral_rec: NeutralRecState | None  # named to avoid clash with db.models.NeutralRecommendation
+
+    # ── analysis completeness ────────────────────────────────────────────────
+    analysis_completeness: float
+    completed_components: list[str]
+    missing_components: list[str]
 
     # ── portfolio (M9+) ──────────────────────────────────────────────────────
     portfolio_snapshot: PortfolioSnapshotState | None
