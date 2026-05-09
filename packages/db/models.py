@@ -32,6 +32,7 @@ from db.enums import AssetType, ResearchRunStatus, RiskLevel, TickerRunStatus
 __all__ = [
     "MarketPrice",
     "CompanyFundamentals",
+    "NewsItem",
     "MemoryIndexEvent",
     "StrategyVersion",
     "PromptVersion",
@@ -111,6 +112,37 @@ class CompanyFundamentals(Base, UUIDMixin, TimestampMixin):
     raw_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
+
+
+class NewsItem(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "news_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "provider", "provider_article_id",
+            name="uq_news_symbol_provider_article",
+        ),
+        Index("ix_news_items_symbol", "symbol"),
+        Index("ix_news_items_published_at", "published_at"),
+        Index("ix_news_items_provider", "provider"),
+    )
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    provider_article_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    author: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    published_at: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    importance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_duplicate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class StrategyVersion(Base, UUIDMixin, TimestampMixin):

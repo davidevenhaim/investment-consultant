@@ -2,6 +2,9 @@
 from typing import Any
 
 _MAX_MEMORY_CHARS = 500  # per memory entry
+_MAX_NEWS_TITLE_CHARS = 120
+_MAX_NEWS_DESC_CHARS = 200
+_MAX_NEWS_ARTICLES = 5
 
 
 def _fmt_pct(v: float | None) -> str:
@@ -108,10 +111,33 @@ def build_context(state: dict[str, Any]) -> str:
     else:
         lines.append("No previous research found for this symbol. First run.")
 
+    # News items (M8+)
+    lines += ["", "=== Recent News ==="]
+    news_score_result: Any = state.get("news_score_result")
+    news_items: list[dict[str, Any]] = state.get("news_items") or []
+    if news_items:
+        top_articles = news_items[:_MAX_NEWS_ARTICLES]
+        for i, art in enumerate(top_articles, 1):
+            title = str(art.get("title") or "")[:_MAX_NEWS_TITLE_CHARS]
+            source = art.get("source_name") or "Unknown"
+            pub_date = str(art.get("published_at") or "")[:10]
+            desc = str(art.get("description") or "")[:_MAX_NEWS_DESC_CHARS]
+            sentiment = art.get("sentiment_score", 0.0)
+            lines.append(
+                f"Article {i}: [{source}] {pub_date} — {title}"
+                + (f" | {desc}" if desc else "")
+                + f" (sentiment: {sentiment:+.2f})"
+            )
+        if news_score_result is not None:
+            lines.append(
+                f"News score: {news_score_result.score:.1f}/15 — {news_score_result.reason}"
+            )
+    else:
+        lines.append("No news data available.")
+
     lines += [
         "",
         "=== Data Gaps (do not speculate about these) ===",
-        "News: NOT AVAILABLE (M8 pending)",
         "Portfolio context: NOT AVAILABLE (M9 pending)",
         "SEC filings: NOT AVAILABLE (M17 pending)",
     ]

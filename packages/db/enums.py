@@ -48,6 +48,8 @@ class EvidenceType(StrEnum):
     POLICY_CHECK = "POLICY_CHECK"
     MANUAL_NOTE = "MANUAL_NOTE"
     LLM_ANALYSIS = "LLM_ANALYSIS"
+    NEWS_ANALYSIS = "NEWS_ANALYSIS"
+    NEWS_ITEM = "NEWS_ITEM"
 
 
 class AssetType(StrEnum):

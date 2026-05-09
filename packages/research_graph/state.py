@@ -144,6 +144,7 @@ class ResearchState(TypedDict):
 
     # ── news (M8+) ───────────────────────────────────────────────────────────
     news_items: list[dict[str, Any]]
+    news_score_result: Any  # NewsScoreResult | None — deferred import
     news_analysis: NewsAnalysis | None
 
     # ── LLM outputs (M7+) ───────────────────────────────────────────────────

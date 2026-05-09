@@ -96,23 +96,27 @@ async def test_score_breakdown_json_with_fake_llm_enabled(
     fp = MockFundamentalsProvider()
 
     app.dependency_overrides[get_db] = override_get_db
+    from news.fake_provider import FakeNewsProvider as FakeNews
+
     with (
         patch("market_data.service._default_provider", return_value=mp),
         patch("fundamentals.service._default_provider", return_value=fp),
         patch("memory.service._get_default_store", return_value=fake_memory_store),
+        patch("news.service._default_provider", return_value=FakeNews()),
         patch("research_graph.runner.build_graph_for_session") as mock_build,
     ):
         # Build graph with fake LLM client
         from research_graph.graph import build_graph_for_session as real_build
 
         def build_with_llm(session, market_provider=None, fundamentals_provider=None,
-                           memory_store=None, llm_client=None):
+                           memory_store=None, llm_client=None, news_provider=None):
             return real_build(
                 session,
                 market_provider=market_provider,
                 fundamentals_provider=fundamentals_provider,
                 memory_store=memory_store,
                 llm_client=fake_llm,
+                news_provider=news_provider,
             )
 
         mock_build.side_effect = build_with_llm

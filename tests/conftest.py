@@ -25,6 +25,7 @@ def override_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHROMA_PORT", "8001")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("LLM_ENABLED", "false")
+    monkeypatch.setenv("NEWS_ENABLED", "false")
     from core.config import get_settings
 
     get_settings.cache_clear()
@@ -80,7 +81,7 @@ async def fake_memory_store():
 
 
 @pytest_asyncio.fixture
-async def api_client(db_session: AsyncSession, fake_memory_store) -> AsyncGenerator:
+async def api_client(db_session: AsyncSession, fake_memory_store, monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator:
     from db.session import get_db
     from httpx import ASGITransport, AsyncClient
 
@@ -96,12 +97,23 @@ async def api_client(db_session: AsyncSession, fake_memory_store) -> AsyncGenera
 
     _mock_fund_provider = MockFundamentalsProvider()
 
+    from news.fake_provider import FakeNewsProvider
+
+    _fake_news_provider = FakeNewsProvider()
+
+    # Enable news so fetch_news_for_symbol uses the patched _default_provider
+    monkeypatch.setenv("NEWS_ENABLED", "true")
+    from core.config import get_settings as _gs
+    _gs.cache_clear()
+
     app.dependency_overrides[get_db] = override_get_db
     with (
         patch("market_data.service._default_provider", return_value=_mock_market_provider),
         patch("fundamentals.service._default_provider", return_value=_mock_fund_provider),
         patch("memory.service._get_default_store", return_value=fake_memory_store),
+        patch("news.service._default_provider", return_value=_fake_news_provider),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client
     app.dependency_overrides.pop(get_db, None)
+    _gs.cache_clear()  # restore settings state after fixture teardown

@@ -9,8 +9,6 @@ from research_graph.state import NeutralRecState, ResearchState, ScoreBreakdown
 
 logger = get_logger(__name__)
 
-# M5 stubs — replaced when real data arrives
-_NEWS_STUB: float = 5.0  # /15 — M8 (conservative stub: unimplemented data scores 0, not ~60%)
 _PORTFOLIO_FIT_STUB: float = 7.0  # /15 — M9
 
 
@@ -356,8 +354,15 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
     market_dq = state.get("data_quality_score") or 1.0
     strategy_config = state.get("strategy_config") or {}
     stub_scores = strategy_config.get("stub_scores", {})
-    news_stub = float(stub_scores.get("news", _NEWS_STUB))
     portfolio_fit_stub = float(stub_scores.get("portfolio_fit", _PORTFOLIO_FIT_STUB))
+
+    # M8: real news score from fetch_news node; fall back to stub if unavailable
+    news_score_result: Any = state.get("news_score_result")
+    if news_score_result is not None:
+        news_score = float(news_score_result.score)
+    else:
+        from news.scoring import _NO_DATA_SCORE
+        news_score = float(stub_scores.get("news", _NO_DATA_SCORE))
 
     try:
         tech = _technical_score(signals)
@@ -365,7 +370,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
         fund, fund_reasons, fund_risks = _fundamental_score(fundamentals)
         val, val_reasons, val_risks = _valuation_score(fundamentals)
 
-        raw = tech + risk + fund + val + news_stub + portfolio_fit_stub
+        raw = tech + risk + fund + val + news_score + portfolio_fit_stub
         total = round(min(100.0, max(0.0, raw)))
 
         completed, missing, completeness, scope = _build_completeness(
@@ -385,7 +390,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             technical_score=round(tech, 2),
             fundamental_score=round(fund, 2),
             valuation_score=round(val, 2),
-            news_score=news_stub,
+            news_score=round(news_score, 2),
             portfolio_fit_score=portfolio_fit_stub,
             risk_score=round(risk, 2),
             total_score=float(total),
@@ -403,10 +408,14 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             confidence = min(confidence, 0.70)
 
         # Build missing_details for final output
-        missing_details: list[str] = [
-            "News analysis not yet included (M8). Recent material events may not be reflected.",
-            "Portfolio context not available (M9). Position-aware recommendations pending.",
-        ]
+        missing_details: list[str] = []
+        if news_score_result is None or news_score_result.no_data:
+            missing_details.append(
+                "News data unavailable. Recent material events may not be reflected."
+            )
+        missing_details.append(
+            "Portfolio context not available (M9). Position-aware recommendations pending."
+        )
         if fdq < 0.3:
             missing_details.append(
                 f"Fundamentals data quality is low ({fdq:.0%}). Key metrics may be missing."
@@ -427,7 +436,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             reasons.append(f"Positive 3-month momentum (+{r3m:.1%}).")
         elif r3m is not None:
             risks.append(f"Negative 3-month momentum ({r3m:.1%}).")
-        risks.append("News analysis pending (M8). Portfolio context pending (M9).")
+        risks.append("Portfolio context pending (M9).")
 
         # ── M7: Apply LLM qualitative output ────────────────────────────────
         llm: Any = state.get("llm_analysis")
@@ -471,10 +480,12 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
                 },
             )
 
+            news_src = "real" if (news_score_result and not news_score_result.no_data) else "stub"
             final_reason = (
                 f"Score {total}/100 ({action.value}). "
                 f"Technical: {tech:.0f}/20, Risk: {risk:.0f}/15, "
-                f"Fundamental: {fund:.0f}/20, Valuation: {val:.0f}/15. "
+                f"Fundamental: {fund:.0f}/20, Valuation: {val:.0f}/15, "
+                f"News ({news_src}): {news_score:.0f}/15. "
                 f"Thesis: {thesis.short_thesis[:120]} "
                 f"Previous recommendation: {thesis.previous_thesis_alignment}. "
                 f"LLM confidence penalty: -{llm_penalty:.2f}. "
@@ -484,11 +495,13 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             breakdown = ScoreBreakdown(
                 **{**breakdown.model_dump(), "llm_enabled": False, "llm_warnings": llm_warnings}
             )
+            news_src = "real" if (news_score_result and not news_score_result.no_data) else "stub"
             final_reason = (
                 f"Score {total}/100 ({action.value}). "
                 f"Technical (real): {tech:.0f}/20, Risk (real): {risk:.0f}/15, "
                 f"Fundamental (real): {fund:.0f}/20, Valuation (real): {val:.0f}/15. "
-                f"News stub: {news_stub:.0f}/15, Portfolio stub: {portfolio_fit_stub:.0f}/15. "
+                f"News ({news_src}): {news_score:.0f}/15, "
+                f"Portfolio stub: {portfolio_fit_stub:.0f}/15. "
                 f"Analysis completeness: {completeness:.0%}."
             )
 

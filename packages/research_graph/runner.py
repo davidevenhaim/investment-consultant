@@ -10,6 +10,7 @@ from db.models import ResearchRun, ResearchRunTicker
 from fundamentals.interfaces import FundamentalsProvider
 from market_data.interfaces import MarketDataProvider
 from memory.interfaces import MemoryStore
+from news.interfaces import NewsProvider
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from research_graph.graph import build_graph_for_session
@@ -80,6 +81,7 @@ def make_initial_state(
         ohlcv=None,
         technical_signals=None,
         news_items=[],
+        news_score_result=None,
         news_analysis=None,
         thesis_comparison=None,
         missing_details=None,
@@ -108,6 +110,7 @@ async def run_research_for_run(
     fundamentals_provider: FundamentalsProvider | None = None,
     memory_store: MemoryStore | None = None,
     llm_client: LLMClient | None = None,
+    news_provider: NewsProvider | None = None,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
@@ -124,7 +127,7 @@ async def run_research_for_run(
         strategy_config = _DEFAULT_SCORING_CONFIG
 
     graph = build_graph_for_session(
-        session, market_provider, fundamentals_provider, memory_store, llm_client
+        session, market_provider, fundamentals_provider, memory_store, llm_client, news_provider
     )
     results: dict[str, Any] = {"symbols_completed": [], "symbols_failed": [], "errors": []}
 

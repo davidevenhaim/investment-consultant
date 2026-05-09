@@ -124,6 +124,54 @@ def make_persist_results(
                 session.add(ev)
                 await session.flush()
 
+            # Persist news evidence rows (when news data available)
+            news_score_result: Any = state.get("news_score_result")
+            if news_score_result is not None and neutral_rec_id is not None:
+                # One NEWS_ANALYSIS row summarising the scoring result
+                news_ev = RecommendationEvidence(
+                    recommendation_id=neutral_rec_id,
+                    recommendation_type="NEUTRAL",
+                    evidence_type=EvidenceType.NEWS_ANALYSIS.value,
+                    source=f"news/{news_score_result.no_data and 'no_data' or 'scored'}",
+                    summary=(
+                        f"News score: {news_score_result.score:.1f}/15 — "
+                        f"{news_score_result.article_count} articles "
+                        f"({news_score_result.positive_count}+/"
+                        f"{news_score_result.negative_count}-). "
+                        f"{news_score_result.reason}"
+                    ),
+                    payload_json=news_score_result.model_dump(
+                        exclude={"top_articles"}
+                    ),
+                )
+                session.add(news_ev)
+
+                # Up to 3 individual NEWS_ITEM evidence rows for top articles
+                top_articles = (
+                    news_score_result.top_articles[:3]
+                    if news_score_result.top_articles
+                    else []
+                )
+                for art in top_articles:
+                    art_ev = RecommendationEvidence(
+                        recommendation_id=neutral_rec_id,
+                        recommendation_type="NEUTRAL",
+                        evidence_type=EvidenceType.NEWS_ITEM.value,
+                        source=art.source_name,
+                        source_id=art.provider_article_id,
+                        summary=art.title[:500],
+                        url=art.url,
+                        published_at=art.published_at,
+                        payload_json={
+                            "sentiment_score": art.sentiment_score,
+                            "relevance_score": art.relevance_score,
+                            "importance_score": art.importance_score,
+                        },
+                    )
+                    session.add(art_ev)
+
+                await session.flush()
+
             # Update ticker status to COMPLETED
             ticker = await session.get(ResearchRunTicker, ticker_db_id)
             if ticker is not None:

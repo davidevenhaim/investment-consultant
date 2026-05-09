@@ -37,6 +37,12 @@ class Settings(BaseSettings):
 
     # News
     newsapi_key: str = ""
+    news_enabled: bool = False
+    news_provider: str = "newsapi"
+    news_lookback_days: int = 14
+    news_max_articles_per_symbol: int = 20
+    news_timeout_seconds: int = 20
+    news_max_retries: int = 2
 
     # App
     environment: Literal["development", "staging", "production", "test"] = "development"
