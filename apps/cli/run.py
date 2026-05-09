@@ -1,4 +1,5 @@
 """CLI entry point to trigger a manual research run. Implemented fully in M3."""
+
 import sys
 
 from core.logging import get_logger, setup_logging

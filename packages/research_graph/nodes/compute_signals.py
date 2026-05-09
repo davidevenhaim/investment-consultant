@@ -1,4 +1,5 @@
 """ComputeSignals — real deterministic technical indicators from OHLCV data."""
+
 from typing import Any
 
 from core.logging import get_logger

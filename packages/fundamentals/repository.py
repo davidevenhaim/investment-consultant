@@ -1,4 +1,5 @@
 """DB read/write for company_fundamentals table."""
+
 import datetime as dt
 from typing import Any
 
@@ -65,10 +66,9 @@ class CompanyFundamentalsRepository:
             return None
         return _row_to_snapshot(row)
 
-    async def get_latest_date(
-        self, symbol: str, provider: str = "yfinance"
-    ) -> dt.date | None:
+    async def get_latest_date(self, symbol: str, provider: str = "yfinance") -> dt.date | None:
         from sqlalchemy import func as sqlfunc
+
         result = await self._s.execute(
             select(sqlfunc.max(CompanyFundamentals.as_of_date)).where(
                 CompanyFundamentals.symbol == symbol.upper(),
@@ -79,6 +79,13 @@ class CompanyFundamentalsRepository:
 
 
 def _row_to_snapshot(row: CompanyFundamentals) -> CompanyFundamentalsSnapshot:
+    dte = _f(row.debt_to_equity)
+    # Repair stale yfinance rows written before M5 normalization fix.
+    # yfinance returns debtToEquity as percentage (e.g. 79.548 → ratio 0.79548).
+    # Old rows stored the raw percentage. Detect and normalize using raw_json reference.
+    if dte is not None and row.provider == "yfinance":
+        dte = _fix_yfinance_dte(dte, row.raw_json or {})
+
     return CompanyFundamentalsSnapshot(
         symbol=row.symbol,
         as_of_date=row.as_of_date,
@@ -96,13 +103,46 @@ def _row_to_snapshot(row: CompanyFundamentals) -> CompanyFundamentalsSnapshot:
         gross_margins=_f(row.gross_margins),
         operating_margins=_f(row.operating_margins),
         return_on_equity=_f(row.return_on_equity),
-        debt_to_equity=_f(row.debt_to_equity),
+        debt_to_equity=dte,
         current_ratio=_f(row.current_ratio),
         free_cashflow=_f(row.free_cashflow),
         total_cash=_f(row.total_cash),
         total_debt=_f(row.total_debt),
         raw_json=row.raw_json or {},
     )
+
+
+def _fix_yfinance_dte(dte: float, raw_json: dict[str, Any]) -> float:
+    """
+    Detect and repair debt_to_equity stored as raw yfinance percentage form.
+
+    yfinance debtToEquity is always percentage-form: 79.548 means 79.548% = 0.79548x ratio.
+    Correct storage is dte/100. Rows written before M5 normalization fix stored the raw value.
+
+    Detection: compare stored value to raw_json["debtToEquity"]:
+    - If stored is closer to raw_dte (un-normalized) → divide by 100
+    - If stored is closer to raw_dte/100 (already normalized) → return as-is
+
+    Fallback when raw_json has no debtToEquity key: treat values > 10 as raw percentage.
+    (yfinance percentage rarely < 2 for real companies; normalized ratio is rarely > 2.)
+    """
+    raw_val = raw_json.get("debtToEquity")
+
+    if raw_val is None:
+        # No reference value. Only normalize if clearly a percentage (> 10).
+        return dte / 100.0 if dte > 10.0 else dte
+
+    raw_f = float(raw_val)
+    if raw_f == 0.0:
+        return 0.0
+
+    dist_raw = abs(dte - raw_f)
+    dist_normalized = abs(dte - raw_f / 100.0)
+
+    if dist_raw < dist_normalized:
+        # Stored value matches the raw percentage — normalize it
+        return dte / 100.0
+    return dte
 
 
 def _f(val: Any) -> float | None:

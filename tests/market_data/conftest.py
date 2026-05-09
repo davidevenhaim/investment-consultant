@@ -1,4 +1,5 @@
 """Shared fixtures for market_data tests."""
+
 import datetime as dt
 
 import pytest

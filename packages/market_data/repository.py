@@ -1,4 +1,5 @@
 """DB read/write for market_prices table."""
+
 import datetime as dt
 
 from db.models import MarketPrice
@@ -84,6 +85,7 @@ class MarketPriceRepository:
 
     async def count_bars(self, symbol: str, provider: str = "yfinance") -> int:
         from sqlalchemy import func as sqlfunc
+
         result = await self._s.execute(
             select(sqlfunc.count()).where(
                 MarketPrice.symbol == symbol.upper(),
@@ -94,6 +96,7 @@ class MarketPriceRepository:
 
     async def latest_date(self, symbol: str, provider: str = "yfinance") -> dt.date | None:
         from sqlalchemy import func as sqlfunc
+
         result = await self._s.execute(
             select(sqlfunc.max(MarketPrice.price_date)).where(
                 MarketPrice.symbol == symbol.upper(),

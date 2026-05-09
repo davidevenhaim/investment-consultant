@@ -1,4 +1,5 @@
-"""PersistResults — write recommendations to Postgres using M2 repositories."""
+"""PersistResults — write recommendations to Postgres, then index to ChromaDB."""
+
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -6,10 +7,12 @@ from typing import Any
 
 from core.logging import get_logger
 from db.enums import TickerRunStatus
+from db.models import MemoryIndexEvent, ResearchRunTicker
 from db.models import NeutralRecommendation as NeutralRecModel
 from db.models import PersonalizedRecommendation as PersonalizedRecModel
-from db.models import ResearchRunTicker
 from db.repositories import StrategyVersionRepository
+from memory.collections import RECOMMENDATION_REPORTS
+from memory.interfaces import MemoryStore
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from research_graph.state import ResearchState
@@ -17,11 +20,13 @@ from research_graph.state import ResearchState
 logger = get_logger(__name__)
 
 
-def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any]:
+def make_persist_results(
+    session: AsyncSession,
+    memory_store: MemoryStore | None = None,
+) -> Callable[[ResearchState], Any]:
     """
-    Factory that binds the DB session into the node closure.
-    Called once per research run; the returned node is reused for each ticker.
-    The ticker's DB record ID is read from state["run_ticker_id"].
+    Factory that binds the DB session and optional MemoryStore into the node closure.
+    Postgres write is authoritative; ChromaDB indexing is best-effort (never raises).
     """
 
     async def persist_results(state: ResearchState) -> dict[str, Any]:
@@ -74,6 +79,7 @@ def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any
                 )
 
             # Persist personalized recommendation
+            personalized_rec_id: uuid.UUID | None = None
             if personalized is not None and neutral_rec_id is not None:
                 pr = PersonalizedRecModel(
                     neutral_recommendation_id=neutral_rec_id,
@@ -87,6 +93,7 @@ def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any
                 )
                 session.add(pr)
                 await session.flush()
+                personalized_rec_id = pr.id
                 logger.info(
                     "persist_personalized_rec",
                     symbol=symbol,
@@ -100,11 +107,8 @@ def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any
                 ticker.finished_at = datetime.now(UTC)
                 await session.flush()
 
-            return {}
-
         except Exception as exc:
             logger.error("node_persist_results_failed", symbol=symbol, error=str(exc))
-            # Per PRINCIPLES.md #3: log, degrade, never crash the run.
             try:
                 ticker = await session.get(ResearchRunTicker, ticker_db_id)
                 if ticker is not None:
@@ -116,4 +120,65 @@ def make_persist_results(session: AsyncSession) -> Callable[[ResearchState], Any
                 logger.warning("persist_results_cleanup_failed", error=str(inner_exc))
             return {"errors": [f"persist_results_failed: {exc}"]}
 
+        # ChromaDB indexing — best-effort, never crashes the run
+        await _index_to_chroma(
+            session=session,
+            store=memory_store,
+            symbol=symbol,
+            run_id=run_id,
+            neutral_rec_id=neutral_rec_id,
+            personalized_rec_id=personalized_rec_id,
+            state=state,
+            price_at_rec=price_at_rec,
+            sv_id=sv_id,
+        )
+
+        return {}
+
     return persist_results
+
+
+async def _index_to_chroma(
+    session: AsyncSession,
+    store: MemoryStore | None,
+    symbol: str,
+    run_id: uuid.UUID,
+    neutral_rec_id: uuid.UUID | None,
+    personalized_rec_id: uuid.UUID | None,
+    state: ResearchState,
+    price_at_rec: float | None,
+    sv_id: uuid.UUID | None,
+) -> None:
+    from memory.service import index_recommendation_report
+
+    neutral = state.get("neutral_rec")
+    personalized = state.get("personalized_rec")
+
+    success = await index_recommendation_report(
+        symbol=symbol,
+        neutral_rec=neutral,
+        personalized_rec=personalized,
+        run_id=str(run_id),
+        neutral_rec_id=str(neutral_rec_id) if neutral_rec_id else None,
+        personalized_rec_id=str(personalized_rec_id) if personalized_rec_id else None,
+        price_at_recommendation=price_at_rec,
+        strategy_version_id=str(sv_id) if sv_id else None,
+        store=store,
+    )
+
+    # Always record audit event in Postgres
+    chroma_doc_id = f"rec_{run_id}_{symbol}" if neutral_rec_id else None
+    event = MemoryIndexEvent(
+        entity_type="neutral_recommendation",
+        entity_id=neutral_rec_id,
+        symbol=symbol,
+        collection_name=RECOMMENDATION_REPORTS,
+        chroma_document_id=chroma_doc_id,
+        status="INDEXED" if success else "FAILED",
+        error_message=None if success else "Chroma indexing failed; see memory service logs",
+    )
+    try:
+        session.add(event)
+        await session.flush()
+    except Exception as exc:
+        logger.warning("memory_audit_event_failed", symbol=symbol, error=str(exc))

@@ -1,4 +1,5 @@
 """Tests that the Alembic migration applies cleanly."""
+
 import asyncio
 import concurrent.futures
 
@@ -23,16 +24,24 @@ async def test_all_tables_exist(db_engine) -> None:
         tables = {row[0] for row in result}
 
     expected = {
-        "strategy_versions", "prompt_versions", "watchlist_symbols",
-        "investor_profiles", "research_runs", "research_run_tickers",
-        "neutral_recommendations", "personalized_recommendations",
-        "recommendation_evidence", "job_events", "audit_logs",
+        "strategy_versions",
+        "prompt_versions",
+        "watchlist_symbols",
+        "investor_profiles",
+        "research_runs",
+        "research_run_tickers",
+        "neutral_recommendations",
+        "personalized_recommendations",
+        "recommendation_evidence",
+        "job_events",
+        "audit_logs",
     }
     assert not (expected - tables), f"Missing: {expected - tables}"
 
 
 def _run_alembic_in_thread() -> None:
     """Sequential asyncio.run() calls — never nested, safe from a thread."""
+
     async def _create_db() -> None:
         engine = create_async_engine(_ADMIN_URL, isolation_level="AUTOCOMMIT")
         async with engine.connect() as conn:
@@ -53,6 +62,7 @@ def _run_alembic_in_thread() -> None:
     from alembic.config import Config
 
     from alembic import command
+
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", _TEMP_URL)
     command.upgrade(cfg, "head")

@@ -34,6 +34,7 @@ def _call(
 
 # ── No gates triggered ────────────────────────────────────────────────────────
 
+
 def test_clean_buy_passes_through() -> None:
     result = _call(action=RecommendationAction.BUY_CANDIDATE)
     assert result.final_action == RecommendationAction.BUY_CANDIDATE
@@ -47,6 +48,7 @@ def test_hold_unaffected_by_policy() -> None:
 
 # ── Confidence gate ───────────────────────────────────────────────────────────
 
+
 def test_low_confidence_blocks_buy() -> None:
     result = _call(confidence=0.50)
     assert result.final_action == RecommendationAction.WATCHLIST
@@ -59,6 +61,7 @@ def test_confidence_exactly_at_threshold_passes() -> None:
 
 
 # ── Data quality gates ────────────────────────────────────────────────────────
+
 
 def test_low_data_quality_blocks_buy() -> None:
     result = _call(data_quality=0.30)
@@ -80,10 +83,13 @@ def test_low_data_quality_blocks_strong_buy_not_buy() -> None:
 
 # ── Fundamentals quality gate ─────────────────────────────────────────────────
 
+
 def test_low_fundamentals_quality_caps_buy() -> None:
     result = _call(fdq=0.10)
     assert result.final_action == RecommendationAction.WATCHLIST
-    assert any(c["gate"] == "low_fundamentals_quality" and c["triggered"] for c in result.policy_checks)
+    assert any(
+        c["gate"] == "low_fundamentals_quality" and c["triggered"] for c in result.policy_checks
+    )
 
 
 def test_moderate_fundamentals_quality_ok() -> None:
@@ -92,6 +98,7 @@ def test_moderate_fundamentals_quality_ok() -> None:
 
 
 # ── Missing components gates ──────────────────────────────────────────────────
+
 
 def test_missing_news_caps_strong_buy() -> None:
     result = _call(
@@ -126,6 +133,7 @@ def test_buy_candidate_unaffected_by_missing_news() -> None:
 
 # ── Position weight gate ──────────────────────────────────────────────────────
 
+
 def test_overweight_position_blocks_buy() -> None:
     result = _call(current_weight=0.20, has_position=True)
     assert result.final_action == RecommendationAction.HOLD
@@ -138,6 +146,7 @@ def test_position_at_max_weight_passes() -> None:
 
 
 # ── Strategy config thresholds ────────────────────────────────────────────────
+
 
 def test_custom_config_thresholds_used() -> None:
     config = {
@@ -152,6 +161,7 @@ def test_custom_config_thresholds_used() -> None:
 
 
 # ── Policy check structure ────────────────────────────────────────────────────
+
 
 def test_policy_result_has_all_expected_gates() -> None:
     result = _call()

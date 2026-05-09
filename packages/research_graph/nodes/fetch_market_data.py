@@ -1,4 +1,5 @@
 """FetchMarketData — fetches real OHLCV from DB/yfinance via market_data service."""
+
 from collections.abc import Callable
 from typing import Any
 

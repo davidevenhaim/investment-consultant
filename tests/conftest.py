@@ -25,6 +25,7 @@ def override_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHROMA_PORT", "8001")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
 
@@ -50,9 +51,7 @@ async def db_engine():
         # Drop test database on teardown
         admin = create_async_engine(_ADMIN_URL, isolation_level="AUTOCOMMIT")
         async with admin.connect() as conn:
-            await conn.execute(
-                text("DROP DATABASE IF EXISTS investment_test WITH (FORCE)")
-            )
+            await conn.execute(text("DROP DATABASE IF EXISTS investment_test WITH (FORCE)"))
         await admin.dispose()
     except Exception as exc:
         pytest.skip(f"PostgreSQL not available: {exc}")
@@ -71,7 +70,16 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture
-async def api_client(db_session: AsyncSession) -> AsyncGenerator:
+async def fake_memory_store():
+    from tests.memory.fake_store import FakeMemoryStore
+
+    store = FakeMemoryStore()
+    yield store
+    store.clear()
+
+
+@pytest_asyncio.fixture
+async def api_client(db_session: AsyncSession, fake_memory_store) -> AsyncGenerator:
     from db.session import get_db
     from httpx import ASGITransport, AsyncClient
 
@@ -84,11 +92,15 @@ async def api_client(db_session: AsyncSession) -> AsyncGenerator:
     _mock_market_provider = MockProvider()
 
     from tests.fundamentals.conftest import MockFundamentalsProvider
+
     _mock_fund_provider = MockFundamentalsProvider()
 
     app.dependency_overrides[get_db] = override_get_db
-    with patch("market_data.service._default_provider", return_value=_mock_market_provider), \
-         patch("fundamentals.service._default_provider", return_value=_mock_fund_provider):
+    with (
+        patch("market_data.service._default_provider", return_value=_mock_market_provider),
+        patch("fundamentals.service._default_provider", return_value=_mock_fund_provider),
+        patch("memory.service._get_default_store", return_value=fake_memory_store),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client
     app.dependency_overrides.pop(get_db, None)

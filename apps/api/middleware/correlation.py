@@ -1,4 +1,5 @@
 """Pure ASGI correlation ID middleware — avoids BaseHTTPMiddleware event loop issues."""
+
 import uuid
 from typing import Any
 

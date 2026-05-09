@@ -1,4 +1,5 @@
 """PersonalizedRecommendation — apply risk policy engine to produce portfolio-aware action."""
+
 from typing import Any
 
 from core.logging import get_logger
@@ -35,7 +36,7 @@ def personalized_recommendation(state: ResearchState) -> dict[str, Any]:
             fundamentals_data_quality=fdq,
             completed_components=state.get("completed_components") or [],
             missing_components=missing,
-            has_position=False,       # M9: replaced with real IBKR position
+            has_position=False,  # M9: replaced with real IBKR position
             current_position_weight=0.0,
             strategy_config=strategy_config,
         )

@@ -19,6 +19,7 @@ def _linear(start: float, step: float, n: int) -> list[float]:
 
 # ── sma ───────────────────────────────────────────────────────────────────────
 
+
 def test_sma_correct() -> None:
     assert sma([1.0, 2.0, 3.0, 4.0, 5.0], 3) == pytest.approx(4.0)
 
@@ -28,6 +29,7 @@ def test_sma_insufficient_data_returns_none() -> None:
 
 
 # ── return_n_bars ─────────────────────────────────────────────────────────────
+
 
 def test_return_n_bars_positive() -> None:
     closes = _linear(100.0, 1.0, 30)  # 100→129
@@ -49,6 +51,7 @@ def test_return_n_bars_insufficient() -> None:
 
 # ── volatility_annualized ─────────────────────────────────────────────────────
 
+
 def test_volatility_flat_series_near_zero() -> None:
     closes = [100.0] * 50
     vol = volatility_annualized(closes, 30)
@@ -57,6 +60,7 @@ def test_volatility_flat_series_near_zero() -> None:
 
 def test_volatility_positive_for_varying_series() -> None:
     import random
+
     random.seed(42)
     closes = [100.0 * (1 + random.gauss(0, 0.01)) for _ in range(60)]
     vol = volatility_annualized(closes, 30)
@@ -69,6 +73,7 @@ def test_volatility_insufficient_returns_none() -> None:
 
 
 # ── max_drawdown ──────────────────────────────────────────────────────────────
+
 
 def test_max_drawdown_no_drawdown() -> None:
     closes = _linear(100.0, 1.0, 50)
@@ -85,6 +90,7 @@ def test_max_drawdown_known_value() -> None:
 
 
 # ── rsi ───────────────────────────────────────────────────────────────────────
+
 
 def test_rsi_all_gains_returns_100() -> None:
     closes = _linear(100.0, 1.0, 20)
@@ -113,6 +119,7 @@ def test_rsi_insufficient_returns_none() -> None:
 
 # ── atr_pct ───────────────────────────────────────────────────────────────────
 
+
 def test_atr_pct_stable_returns_small_value() -> None:
     n = 20
     closes = [100.0] * n
@@ -128,6 +135,7 @@ def test_atr_pct_insufficient_returns_none() -> None:
 
 
 # ── relative_strength ─────────────────────────────────────────────────────────
+
 
 def test_relative_strength_outperforming() -> None:
     # symbol up 10%, bench up 5%
@@ -154,6 +162,7 @@ def test_relative_strength_insufficient_bench() -> None:
 
 # ── compute_all_signals ───────────────────────────────────────────────────────
 
+
 def test_compute_all_signals_returns_required_keys() -> None:
     closes = _linear(100.0, 0.5, 260)
     highs = [c * 1.01 for c in closes]
@@ -163,14 +172,25 @@ def test_compute_all_signals_returns_required_keys() -> None:
     signals = compute_all_signals("AAPL", closes, highs, lows, spy)
 
     required = [
-        "trading_days_count", "latest_close",
-        "return_1m", "return_3m", "return_6m", "return_12m",
-        "volatility_30d", "volatility_90d",
+        "trading_days_count",
+        "latest_close",
+        "return_1m",
+        "return_3m",
+        "return_6m",
+        "return_12m",
+        "volatility_30d",
+        "volatility_90d",
         "max_drawdown_1y",
-        "sma_20", "sma_50", "sma_200",
-        "price_vs_sma_20", "price_vs_sma_50", "price_vs_sma_200",
-        "rsi_14", "atr_14_pct",
-        "relative_strength_3m_vs_spy", "relative_strength_12m_vs_spy",
+        "sma_20",
+        "sma_50",
+        "sma_200",
+        "price_vs_sma_20",
+        "price_vs_sma_50",
+        "price_vs_sma_200",
+        "rsi_14",
+        "atr_14_pct",
+        "relative_strength_3m_vs_spy",
+        "relative_strength_12m_vs_spy",
     ]
     for key in required:
         assert key in signals, f"missing key: {key}"

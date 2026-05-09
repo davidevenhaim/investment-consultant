@@ -1,4 +1,3 @@
-
 from core.errors import (
     DatabaseError,
     InvestmentConsultantError,

@@ -1,4 +1,5 @@
 """yfinance implementation of MarketDataProvider."""
+
 import datetime as dt
 
 import yfinance as yf

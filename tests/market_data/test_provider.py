@@ -1,4 +1,5 @@
 """Tests for yfinance provider — mocks yfinance.Ticker to avoid network."""
+
 import datetime as dt
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ from market_data.yfinance_provider import YFinanceProvider
 
 def _fake_df(n: int = 30) -> pd.DataFrame:
     import numpy as np
+
     dates = pd.date_range("2024-01-02", periods=n, freq="B")
     closes = 150.0 + np.arange(n, dtype=float)
     return pd.DataFrame(

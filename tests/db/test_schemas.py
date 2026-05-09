@@ -1,4 +1,5 @@
 """Unit tests for Pydantic schemas — no DB needed."""
+
 import pytest
 from db.enums import ResearchRunType, RiskLevel
 from db.schemas import (

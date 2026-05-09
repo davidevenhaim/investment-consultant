@@ -1,4 +1,5 @@
 """Unit tests for individual graph nodes — no DB required for scoring/policy nodes."""
+
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,7 +15,7 @@ from research_graph.nodes.neutral_recommendation import (
     score_to_action,
 )
 from research_graph.nodes.personalized_recommendation import personalized_recommendation
-from research_graph.nodes.retrieve_memory import retrieve_memory
+from research_graph.nodes.retrieve_memory import make_retrieve_memory
 from research_graph.state import NeutralRecState, ResearchState, ScoreBreakdown
 
 from tests.fundamentals.conftest import _make_snapshot
@@ -29,6 +30,9 @@ def _base_state(symbol: str = "AAPL") -> ResearchState:
         strategy_version="v0.1.0",
         prompt_version="v0.1.0",
         strategy_config={},
+        memory_context=None,
+        memory_count=0,
+        memory_summary=None,
         previous_thesis=None,
         last_recommendation=None,
         past_mistakes=[],
@@ -86,6 +90,7 @@ def _signals_bearish() -> dict[str, Any]:
 
 # ── load_ticker_context ───────────────────────────────────────────────────────
 
+
 def test_load_ticker_context_sets_as_of_time() -> None:
     before = datetime.now(UTC)
     result = load_ticker_context(_base_state())
@@ -95,26 +100,38 @@ def test_load_ticker_context_sets_as_of_time() -> None:
 
 # ── retrieve_memory ───────────────────────────────────────────────────────────
 
-def test_retrieve_memory_returns_empty_stubs() -> None:
-    result = retrieve_memory(_base_state())
+
+@pytest.mark.asyncio
+async def test_retrieve_memory_first_run_empty() -> None:
+    from tests.memory.fake_store import FakeMemoryStore
+
+    store = FakeMemoryStore()
+    node = make_retrieve_memory(store=store)
+    result = await node(_base_state())
     assert result["previous_thesis"] is None
     assert result["last_recommendation"] is None
     assert result["past_mistakes"] == []
+    assert result["memory_count"] == 0
+    assert "First run" in (result["memory_summary"] or "")
 
 
 # ── score_to_action ───────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("score,expected", [
-    (90, RecommendationAction.STRONG_BUY),
-    (85, RecommendationAction.STRONG_BUY),
-    (75, RecommendationAction.BUY_CANDIDATE),
-    (70, RecommendationAction.BUY_CANDIDATE),
-    (60, RecommendationAction.HOLD),
-    (50, RecommendationAction.HOLD),
-    (40, RecommendationAction.REDUCE),
-    (35, RecommendationAction.REDUCE),
-    (20, RecommendationAction.NO_ACTION),
-])
+
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (90, RecommendationAction.STRONG_BUY),
+        (85, RecommendationAction.STRONG_BUY),
+        (75, RecommendationAction.BUY_CANDIDATE),
+        (70, RecommendationAction.BUY_CANDIDATE),
+        (60, RecommendationAction.HOLD),
+        (50, RecommendationAction.HOLD),
+        (40, RecommendationAction.REDUCE),
+        (35, RecommendationAction.REDUCE),
+        (20, RecommendationAction.NO_ACTION),
+    ],
+)
 def test_score_to_action_no_position(score: int, expected: RecommendationAction) -> None:
     assert score_to_action(float(score), has_position=False) == expected
 
@@ -124,12 +141,15 @@ def test_score_to_action_sell_with_position() -> None:
 
 
 def test_score_to_action_uses_config_thresholds() -> None:
-    config = {"action_thresholds": {"strong_buy": 90, "buy_candidate": 75, "hold": 55, "reduce": 40}}
+    config = {
+        "action_thresholds": {"strong_buy": 90, "buy_candidate": 75, "hold": 55, "reduce": 40}
+    }
     assert score_to_action(87.0, config=config) == RecommendationAction.BUY_CANDIDATE
     assert score_to_action(91.0, config=config) == RecommendationAction.STRONG_BUY
 
 
 # ── _technical_score ──────────────────────────────────────────────────────────
+
 
 def test_technical_score_bullish() -> None:
     score = _technical_score(_signals_bullish())
@@ -147,6 +167,7 @@ def test_technical_score_empty_signals_returns_zero() -> None:
 
 # ── _risk_score ───────────────────────────────────────────────────────────────
 
+
 def test_risk_score_bullish() -> None:
     assert 8 <= _risk_score(_signals_bullish()) <= 15
 
@@ -160,6 +181,7 @@ def test_risk_score_low_volatility_atr_fallback() -> None:
 
 
 # ── _fundamental_score ────────────────────────────────────────────────────────
+
 
 def test_fundamental_score_strong_company() -> None:
     snap = _make_snapshot("AAPL")  # high margins, good growth, positive ROE
@@ -225,6 +247,7 @@ def test_fundamental_score_dte_high_is_flagged() -> None:
 
 # ── _valuation_score ──────────────────────────────────────────────────────────
 
+
 def test_valuation_score_reasonable() -> None:
     snap = _make_snapshot("AAPL", trailing_pe=20.0, forward_pe=18.0, price_to_book=3.0)
     score, reasons, _ = _valuation_score(snap)
@@ -234,8 +257,10 @@ def test_valuation_score_reasonable() -> None:
 def test_valuation_score_expensive() -> None:
     snap = _make_snapshot(
         "PRICEY",
-        trailing_pe=120.0, forward_pe=100.0,
-        price_to_book=30.0, price_to_sales=25.0,
+        trailing_pe=120.0,
+        forward_pe=100.0,
+        price_to_book=30.0,
+        price_to_sales=25.0,
         revenue_growth=0.05,
     )
     score, _, risks = _valuation_score(snap)
@@ -259,6 +284,7 @@ def test_valuation_score_none_returns_zero() -> None:
 
 
 # ── neutral_recommendation (full node) ───────────────────────────────────────
+
 
 def test_neutral_recommendation_bullish_with_fundamentals() -> None:
     state = _base_state("AAPL")
@@ -354,6 +380,7 @@ def test_neutral_recommendation_config_thresholds_respected() -> None:
 
 
 # ── personalized_recommendation ───────────────────────────────────────────────
+
 
 def _make_neutral_rec(action: RecommendationAction, score: int) -> NeutralRecState:
     return NeutralRecState(

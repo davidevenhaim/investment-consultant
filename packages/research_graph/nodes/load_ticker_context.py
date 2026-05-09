@@ -1,4 +1,5 @@
 """LoadTickerContext — sets as_of_time and validates run context is populated."""
+
 from datetime import UTC, datetime
 from typing import Any
 

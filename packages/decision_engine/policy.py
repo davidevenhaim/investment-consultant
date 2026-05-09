@@ -3,6 +3,7 @@
 Applies hard gates and soft caps to the neutral recommendation action.
 All logic here is auditable and testable without any external services.
 """
+
 from typing import Any
 
 from core.logging import get_logger
@@ -83,19 +84,23 @@ def apply_policy(
     if data_quality_score < dq_thresh_rec and _is_buy(current):
         current = RecommendationAction.WATCHLIST
         cap_applied = "low_market_data_quality"
-        checks.append({
-            "gate": "low_market_data_quality",
-            "triggered": True,
-            "reason": f"Market data quality {data_quality_score:.2f} < {dq_thresh_rec:.2f}",
-        })
+        checks.append(
+            {
+                "gate": "low_market_data_quality",
+                "triggered": True,
+                "reason": f"Market data quality {data_quality_score:.2f} < {dq_thresh_rec:.2f}",
+            }
+        )
         reasons.append(f"Insufficient market data quality ({data_quality_score:.0%}).")
     else:
-        checks.append({
-            "gate": "low_market_data_quality",
-            "triggered": False,
-            "data_quality_score": data_quality_score,
-            "threshold": dq_thresh_rec,
-        })
+        checks.append(
+            {
+                "gate": "low_market_data_quality",
+                "triggered": False,
+                "data_quality_score": data_quality_score,
+                "threshold": dq_thresh_rec,
+            }
+        )
 
     # Gate 2: fundamentals quality too low → WATCHLIST (for buy actions)
     fdq_thresh = _DEFAULT_MIN_FUNDAMENTALS_QUALITY
@@ -105,49 +110,61 @@ def apply_policy(
         if _action_rank(capped) < _action_rank(current):
             current = capped
             cap_applied = "low_fundamentals_quality"
-        checks.append({
-            "gate": "low_fundamentals_quality",
-            "triggered": True,
-            "reason": (
-                f"Fundamentals data quality {fundamentals_data_quality:.2f} < {fdq_thresh:.2f}"
-            ),
-        })
+        checks.append(
+            {
+                "gate": "low_fundamentals_quality",
+                "triggered": True,
+                "reason": (
+                    f"Fundamentals data quality {fundamentals_data_quality:.2f} < {fdq_thresh:.2f}"
+                ),
+            }
+        )
         reasons.append(f"Insufficient fundamentals data quality ({fundamentals_data_quality:.0%}).")
     else:
-        checks.append({
-            "gate": "low_fundamentals_quality",
-            "triggered": False,
-            "fundamentals_data_quality": fundamentals_data_quality,
-            "threshold": fdq_thresh,
-        })
+        checks.append(
+            {
+                "gate": "low_fundamentals_quality",
+                "triggered": False,
+                "fundamentals_data_quality": fundamentals_data_quality,
+                "threshold": fdq_thresh,
+            }
+        )
 
     # Gate 3: min confidence to buy
     if confidence < conf_thresh and _is_buy(current):
         current = RecommendationAction.WATCHLIST
         cap_applied = cap_applied or "low_confidence"
-        checks.append({
-            "gate": "min_confidence",
-            "triggered": True,
-            "reason": f"Confidence {confidence:.2f} < threshold {conf_thresh:.2f}",
-        })
+        checks.append(
+            {
+                "gate": "min_confidence",
+                "triggered": True,
+                "reason": f"Confidence {confidence:.2f} < threshold {conf_thresh:.2f}",
+            }
+        )
         reasons.append(f"Confidence {confidence:.0%} below minimum to buy.")
     else:
-        checks.append({
-            "gate": "min_confidence",
-            "triggered": False,
-            "confidence": confidence,
-            "threshold": conf_thresh,
-        })
+        checks.append(
+            {
+                "gate": "min_confidence",
+                "triggered": False,
+                "confidence": confidence,
+                "threshold": conf_thresh,
+            }
+        )
 
     # Gate 4: market data quality gate for strong buy (higher bar)
     if data_quality_score < dq_thresh_buy and _is_strong_buy(current):
         current = RecommendationAction.BUY_CANDIDATE
         cap_applied = cap_applied or "insufficient_data_for_strong_buy"
-        checks.append({
-            "gate": "min_data_quality_strong_buy",
-            "triggered": True,
-            "reason": f"Data quality {data_quality_score:.2f} < {dq_thresh_buy:.2f} for STRONG_BUY",
-        })
+        checks.append(
+            {
+                "gate": "min_data_quality_strong_buy",
+                "triggered": True,
+                "reason": (
+                    f"Data quality {data_quality_score:.2f} < {dq_thresh_buy:.2f} for STRONG_BUY"
+                ),
+            }
+        )
 
     # Gate 5: missing news → cap STRONG_BUY at BUY_CANDIDATE
     news_missing = "news" in missing_components
@@ -157,11 +174,13 @@ def apply_policy(
         if _action_rank(capped) < _action_rank(current):
             current = capped
             cap_applied = cap_applied or "missing_news"
-        checks.append({
-            "gate": "missing_news",
-            "triggered": True,
-            "reason": "News analysis not yet available — STRONG_BUY capped at BUY_CANDIDATE",
-        })
+        checks.append(
+            {
+                "gate": "missing_news",
+                "triggered": True,
+                "reason": "News analysis not yet available — STRONG_BUY capped at BUY_CANDIDATE",
+            }
+        )
         reasons.append("News analysis missing. Action capped below STRONG_BUY.")
     else:
         checks.append({"gate": "missing_news", "triggered": False, "news_missing": news_missing})
@@ -174,39 +193,43 @@ def apply_policy(
         if _action_rank(capped) < _action_rank(current):
             current = capped
             cap_applied = cap_applied or "missing_portfolio_context"
-        checks.append({
-            "gate": "missing_portfolio_context",
-            "triggered": True,
-            "reason": "Portfolio context not yet available — STRONG_BUY capped",
-        })
+        checks.append(
+            {
+                "gate": "missing_portfolio_context",
+                "triggered": True,
+                "reason": "Portfolio context not yet available — STRONG_BUY capped",
+            }
+        )
     else:
-        checks.append({
-            "gate": "missing_portfolio_context",
-            "triggered": False,
-            "portfolio_context_missing": port_missing,
-        })
+        checks.append(
+            {
+                "gate": "missing_portfolio_context",
+                "triggered": False,
+                "portfolio_context_missing": port_missing,
+            }
+        )
 
     # Gate 7: position overweight → downgrade buy
     if current_position_weight > max_weight and _is_buy(current):
         current = RecommendationAction.HOLD
         cap_applied = cap_applied or "position_overweight"
-        checks.append({
-            "gate": "max_position_weight",
-            "triggered": True,
-            "reason": (
-                f"Position weight {current_position_weight:.0%} > max {max_weight:.0%}"
-            ),
-        })
-        reasons.append(
-            f"Position already at {current_position_weight:.0%} (max {max_weight:.0%})."
+        checks.append(
+            {
+                "gate": "max_position_weight",
+                "triggered": True,
+                "reason": (f"Position weight {current_position_weight:.0%} > max {max_weight:.0%}"),
+            }
         )
+        reasons.append(f"Position already at {current_position_weight:.0%} (max {max_weight:.0%}).")
     else:
-        checks.append({
-            "gate": "max_position_weight",
-            "triggered": False,
-            "current": current_position_weight,
-            "max": max_weight,
-        })
+        checks.append(
+            {
+                "gate": "max_position_weight",
+                "triggered": False,
+                "current": current_position_weight,
+                "max": max_weight,
+            }
+        )
 
     return PolicyResult(
         original_action=action,

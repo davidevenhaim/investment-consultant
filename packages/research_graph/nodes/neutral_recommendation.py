@@ -1,4 +1,5 @@
 """NeutralRecommendation — deterministic scoring engine. No LLM involved."""
+
 from typing import Any
 
 from core.logging import get_logger
@@ -9,11 +10,12 @@ from research_graph.state import NeutralRecState, ResearchState, ScoreBreakdown
 logger = get_logger(__name__)
 
 # M5 stubs — replaced when real data arrives
-_NEWS_STUB: float = 5.0        # /15 — M8 (conservative stub: unimplemented data scores 0, not ~60%)
+_NEWS_STUB: float = 5.0  # /15 — M8 (conservative stub: unimplemented data scores 0, not ~60%)
 _PORTFOLIO_FIT_STUB: float = 7.0  # /15 — M9
 
 
 # ── Technical score (M4+) ─────────────────────────────────────────────────────
+
 
 def _technical_score(signals: dict[str, Any]) -> float:
     """0–20 from real technical indicators."""
@@ -36,6 +38,7 @@ def _technical_score(signals: dict[str, Any]) -> float:
 
 # ── Risk score (M4+) ──────────────────────────────────────────────────────────
 
+
 def _risk_score(signals: dict[str, Any]) -> float:
     """0–15. Lower volatility/drawdown = higher score."""
     score = 0.0
@@ -44,34 +47,54 @@ def _risk_score(signals: dict[str, Any]) -> float:
         atr = signals.get("atr_14_pct") or signals.get("atr_pct")
         if atr is not None:
             score += (
-                6.0 if atr < 0.010 else
-                4.5 if atr < 0.020 else
-                3.0 if atr < 0.030 else
-                1.5 if atr < 0.050 else 0.0
+                6.0
+                if atr < 0.010
+                else 4.5
+                if atr < 0.020
+                else 3.0
+                if atr < 0.030
+                else 1.5
+                if atr < 0.050
+                else 0.0
             )
     else:
         score += (
-            6.0 if vol90 < 0.15 else
-            4.5 if vol90 < 0.25 else
-            3.0 if vol90 < 0.35 else
-            1.5 if vol90 < 0.50 else 0.0
+            6.0
+            if vol90 < 0.15
+            else 4.5
+            if vol90 < 0.25
+            else 3.0
+            if vol90 < 0.35
+            else 1.5
+            if vol90 < 0.50
+            else 0.0
         )
     atr_pct = signals.get("atr_14_pct") or signals.get("atr_pct")
     if atr_pct is not None:
         score += (
-            4.0 if atr_pct < 0.010 else
-            3.0 if atr_pct < 0.020 else
-            2.0 if atr_pct < 0.030 else
-            1.0 if atr_pct < 0.050 else 0.0
+            4.0
+            if atr_pct < 0.010
+            else 3.0
+            if atr_pct < 0.020
+            else 2.0
+            if atr_pct < 0.030
+            else 1.0
+            if atr_pct < 0.050
+            else 0.0
         )
     mdd = signals.get("max_drawdown_1y")
     if mdd is not None:
         abs_mdd = abs(mdd)
         score += (
-            5.0 if abs_mdd < 0.10 else
-            3.5 if abs_mdd < 0.20 else
-            2.0 if abs_mdd < 0.30 else
-            1.0 if abs_mdd < 0.45 else 0.0
+            5.0
+            if abs_mdd < 0.10
+            else 3.5
+            if abs_mdd < 0.20
+            else 2.0
+            if abs_mdd < 0.30
+            else 1.0
+            if abs_mdd < 0.45
+            else 0.0
         )
     else:
         score += 2.5
@@ -79,6 +102,7 @@ def _risk_score(signals: dict[str, Any]) -> float:
 
 
 # ── Fundamental score (M5+) ──────────────────────────────────────────────────
+
 
 def _fundamental_score(snapshot: Any) -> tuple[float, list[str], list[str]]:
     """0–20 from real company fundamentals. Returns (score, reasons, risks)."""
@@ -175,6 +199,7 @@ def _fundamental_score(snapshot: Any) -> tuple[float, list[str], list[str]]:
 
 # ── Valuation score (M5+) ────────────────────────────────────────────────────
 
+
 def _valuation_score(snapshot: Any) -> tuple[float, list[str], list[str]]:
     """0–15 from real valuation metrics. Growth-adjusted where possible."""
     if snapshot is None:
@@ -257,6 +282,7 @@ def _valuation_score(snapshot: Any) -> tuple[float, list[str], list[str]]:
 
 # ── Action threshold table ────────────────────────────────────────────────────
 
+
 def score_to_action(
     score: float,
     has_position: bool = False,
@@ -283,6 +309,7 @@ def score_to_action(
 
 
 # ── Analysis completeness ─────────────────────────────────────────────────────
+
 
 def _build_completeness(
     signals: dict[str, Any] | None,
@@ -313,6 +340,7 @@ def _build_completeness(
 
 
 # ── Main node ─────────────────────────────────────────────────────────────────
+
 
 def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
     """

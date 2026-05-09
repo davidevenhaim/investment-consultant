@@ -1,4 +1,5 @@
 """Fundamentals API endpoint tests."""
+
 import pytest
 
 

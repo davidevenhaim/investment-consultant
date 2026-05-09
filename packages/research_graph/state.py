@@ -3,6 +3,7 @@
 These Pydantic models are the graph's internal typed outputs — they are distinct from
 the SQLAlchemy DB models in packages/db/models.py.
 """
+
 import operator
 from datetime import datetime
 from typing import Annotated, Any
@@ -17,7 +18,7 @@ class ScoreBreakdown(BaseModel):
     technical_score: float = 0.0
     fundamental_score: float = 0.0
     valuation_score: float = 0.0
-    news_score: float = 0.0         # stub until M8
+    news_score: float = 0.0  # stub until M8
     portfolio_fit_score: float = 0.0  # stub until M9
     risk_score: float = 0.0
     total_score: float = 0.0
@@ -116,6 +117,9 @@ class ResearchState(TypedDict):
     strategy_config: dict[str, Any]  # scoring config loaded from strategy_versions table
 
     # ── retrieved memory (M6+) ───────────────────────────────────────────────
+    memory_context: Any  # MemoryContext | None — deferred import
+    memory_count: int
+    memory_summary: str | None
     previous_thesis: str | None
     last_recommendation: dict[str, Any] | None
     past_mistakes: list[dict[str, Any]]

@@ -1,4 +1,5 @@
 """Domain schemas for company fundamentals — provider-agnostic."""
+
 import datetime as dt
 from typing import Any
 
@@ -56,9 +57,7 @@ class CompanyFundamentalsSnapshot(BaseModel):
         This is field completeness — whether the provider returned data for each metric.
         It does NOT measure institutional data reliability or source quality.
         """
-        populated = sum(
-            1 for f in _KEY_FIELDS if getattr(self, f, None) is not None
-        )
+        populated = sum(1 for f in _KEY_FIELDS if getattr(self, f, None) is not None)
         return round(populated / len(_KEY_FIELDS), 3)
 
     @property

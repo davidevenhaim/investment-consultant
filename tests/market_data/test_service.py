@@ -1,4 +1,5 @@
 """Tests for market data service — uses mock provider, requires DB."""
+
 import datetime as dt
 
 import pytest
@@ -10,7 +11,9 @@ from .conftest import MockProvider, _make_bars
 
 
 @pytest.mark.asyncio
-async def test_ensure_price_history_inserts_bars(db_session: AsyncSession, mock_provider: MockProvider) -> None:
+async def test_ensure_price_history_inserts_bars(
+    db_session: AsyncSession, mock_provider: MockProvider
+) -> None:
     bars = await ensure_price_history(db_session, "AAPL", years=5, provider=mock_provider)
     assert len(bars) > 0
     assert all(b.symbol == "AAPL" for b in bars)
@@ -18,14 +21,18 @@ async def test_ensure_price_history_inserts_bars(db_session: AsyncSession, mock_
 
 
 @pytest.mark.asyncio
-async def test_ensure_price_history_idempotent(db_session: AsyncSession, mock_provider: MockProvider) -> None:
+async def test_ensure_price_history_idempotent(
+    db_session: AsyncSession, mock_provider: MockProvider
+) -> None:
     bars1 = await ensure_price_history(db_session, "NVDA", years=5, provider=mock_provider)
     bars2 = await ensure_price_history(db_session, "NVDA", years=5, provider=mock_provider)
     assert len(bars1) == len(bars2)
 
 
 @pytest.mark.asyncio
-async def test_ensure_price_history_ordered_ascending(db_session: AsyncSession, mock_provider: MockProvider) -> None:
+async def test_ensure_price_history_ordered_ascending(
+    db_session: AsyncSession, mock_provider: MockProvider
+) -> None:
     bars = await ensure_price_history(db_session, "MSFT", years=5, provider=mock_provider)
     dates = [b.price_date for b in bars]
     assert dates == sorted(dates)
@@ -50,7 +57,9 @@ async def test_upsert_no_duplicates(db_session: AsyncSession, mock_provider: Moc
 
 
 @pytest.mark.asyncio
-async def test_repository_latest_date(db_session: AsyncSession, mock_provider: MockProvider) -> None:
+async def test_repository_latest_date(
+    db_session: AsyncSession, mock_provider: MockProvider
+) -> None:
     await ensure_price_history(db_session, "AAPL", years=5, provider=mock_provider)
     repo = MarketPriceRepository(db_session)
     latest = await repo.latest_date("AAPL", provider="mock")
@@ -59,6 +68,7 @@ async def test_repository_latest_date(db_session: AsyncSession, mock_provider: M
 
 
 # ── data quality ──────────────────────────────────────────────────────────────
+
 
 def test_data_quality_high() -> None:
     bars = _make_bars("X", n=760)  # > 3y

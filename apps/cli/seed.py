@@ -1,4 +1,5 @@
 """Idempotent seed script. Safe to run multiple times."""
+
 import asyncio
 import sys
 from pathlib import Path

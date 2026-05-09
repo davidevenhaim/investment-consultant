@@ -1,4 +1,5 @@
 """Fundamentals ingestion service — ensures a recent snapshot exists and returns it."""
+
 import datetime as dt
 
 from core.logging import get_logger
@@ -36,10 +37,7 @@ async def ensure_company_fundamentals(
     today = dt.date.today()
 
     latest_date = await repo.get_latest_date(sym, provider.provider_name)
-    needs_fetch = (
-        latest_date is None
-        or (today - latest_date).days > max_age_days
-    )
+    needs_fetch = latest_date is None or (today - latest_date).days > max_age_days
 
     if needs_fetch:
         logger.info("fundamentals_fetching", symbol=sym, provider=provider.provider_name)

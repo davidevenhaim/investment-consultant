@@ -1,4 +1,5 @@
 """Abstract provider interface for company fundamentals."""
+
 from abc import ABC, abstractmethod
 
 from fundamentals.schemas import CompanyFundamentalsSnapshot
@@ -14,5 +15,4 @@ class FundamentalsProvider(ABC):
 
     @property
     @abstractmethod
-    def provider_name(self) -> str:
-        ...
+    def provider_name(self) -> str: ...

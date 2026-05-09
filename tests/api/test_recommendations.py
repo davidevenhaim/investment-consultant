@@ -1,4 +1,5 @@
 """Recommendation API tests — require DB."""
+
 import pytest
 
 

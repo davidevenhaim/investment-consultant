@@ -1,4 +1,4 @@
-.PHONY: up down migrate migrate-local seed test lint format logs shell-api run build venv install
+.PHONY: up down migrate migrate-local seed test test-integration lint format logs shell-api run build venv install memory-reset-dev
 
 PYTHON    := python3.12
 VENV      := .venv
@@ -38,7 +38,16 @@ seed-local:
 	PYTHONPATH=$(PYTHONPATH) $(BIN)/python apps/cli/seed.py
 
 test: $(VENV)
-	PYTHONPATH=$(PYTHONPATH) $(BIN)/pytest tests/ -v --cov=packages --cov=apps --cov-report=term-missing
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/pytest tests/ -v --cov=packages --cov=apps --cov-report=term-missing -m "not integration"
+
+test-integration: $(VENV)
+	@echo "Running integration tests — requires live ChromaDB on localhost:8001"
+	@echo "Run 'make up' first to start services."
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/pytest tests/integration/ -m integration -v
+
+memory-reset-dev:
+	@echo "Resetting dev Chroma collections (clears all indexed research memory)..."
+	$(COMPOSE) exec -T api python -m apps.cli.memory reset --yes
 
 lint: $(VENV)
 	PYTHONPATH=$(PYTHONPATH) $(BIN)/ruff check packages/ apps/ tests/

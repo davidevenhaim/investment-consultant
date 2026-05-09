@@ -1,4 +1,5 @@
 """Research run API tests — require DB. M3: graph runs synchronously, returns COMPLETED."""
+
 import pytest
 
 
@@ -57,6 +58,7 @@ async def test_get_run_by_id(api_client) -> None:
 @pytest.mark.asyncio
 async def test_get_nonexistent_run_returns_404(api_client) -> None:
     import uuid
+
     resp = await api_client.get(f"/api/v1/research-runs/{uuid.uuid4()}")
     assert resp.status_code == 404
 
@@ -85,5 +87,9 @@ async def test_recommendations_populated_after_run(api_client) -> None:
     assert aapl["neutral"] is not None
     assert aapl["neutral"]["score"] > 0
     assert aapl["neutral"]["action"] in (
-        "BUY_CANDIDATE", "HOLD", "STRONG_BUY", "REDUCE", "NO_ACTION"
+        "BUY_CANDIDATE",
+        "HOLD",
+        "STRONG_BUY",
+        "REDUCE",
+        "NO_ACTION",
     )

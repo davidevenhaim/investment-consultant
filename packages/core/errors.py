@@ -70,6 +70,10 @@ class MarketDataError(ExternalServiceError):
     error_code = "MARKET_DATA_ERROR"
 
 
+class MemoryStoreError(ExternalServiceError):
+    error_code = "MEMORY_STORE_ERROR"
+
+
 class FundamentalsDataError(ExternalServiceError):
     error_code = "FUNDAMENTALS_DATA_ERROR"
 

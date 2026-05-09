@@ -1,4 +1,5 @@
 """Abstract provider interface for market data."""
+
 import datetime as dt
 from abc import ABC, abstractmethod
 
@@ -20,5 +21,4 @@ class MarketDataProvider(ABC):
 
     @property
     @abstractmethod
-    def provider_name(self) -> str:
-        ...
+    def provider_name(self) -> str: ...

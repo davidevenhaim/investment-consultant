@@ -1,4 +1,5 @@
 """Watchlist CRUD API tests — require DB."""
+
 import pytest
 
 

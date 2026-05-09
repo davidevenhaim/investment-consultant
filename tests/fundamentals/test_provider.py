@@ -1,4 +1,5 @@
 """Tests for yfinance fundamentals provider — mocks yfinance.Ticker.info."""
+
 import datetime as dt
 from unittest.mock import MagicMock, patch
 

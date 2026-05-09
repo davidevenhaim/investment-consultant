@@ -3,6 +3,7 @@
 All functions take a list of floats (closes or OHLCV) ordered oldest→newest.
 Returns None when insufficient data rather than raising.
 """
+
 import math
 from typing import Any
 

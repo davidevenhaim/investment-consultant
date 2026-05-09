@@ -1,4 +1,5 @@
 """yfinance implementation of FundamentalsProvider."""
+
 import datetime as dt
 from typing import Any
 

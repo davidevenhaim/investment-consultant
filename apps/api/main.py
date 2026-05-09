@@ -15,6 +15,7 @@ from apps.api.routers import (
     fundamentals,
     health,
     market_data,
+    memory,
     recommendations,
     research_runs,
     risk_profile,
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     setup_logging(settings.log_level)
     from db.session import init_db
+
     init_db(settings.database_url)
     logger.info("api_starting", environment=settings.environment, version="0.1.0")
     yield
@@ -96,6 +98,7 @@ app.include_router(research_runs.router, prefix="/api/v1")
 app.include_router(recommendations.router, prefix="/api/v1")
 app.include_router(market_data.router, prefix="/api/v1")
 app.include_router(fundamentals.router, prefix="/api/v1")
+app.include_router(memory.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

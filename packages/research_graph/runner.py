@@ -1,4 +1,5 @@
 """Runner — orchestrates the graph for a full research run (all tickers)."""
+
 from datetime import UTC, datetime
 from typing import Any
 
@@ -7,6 +8,7 @@ from db.enums import TickerRunStatus
 from db.models import ResearchRun, ResearchRunTicker
 from fundamentals.interfaces import FundamentalsProvider
 from market_data.interfaces import MarketDataProvider
+from memory.interfaces import MemoryStore
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from research_graph.graph import build_graph_for_session
@@ -18,15 +20,23 @@ logger = get_logger(__name__)
 _DEFAULT_SCORING_CONFIG: dict[str, Any] = {
     "version": "v0.1.0",
     "score_weights": {
-        "technical": 20, "risk": 15, "fundamental": 20,
-        "valuation": 15, "news": 15, "portfolio_fit": 15,
+        "technical": 20,
+        "risk": 15,
+        "fundamental": 20,
+        "valuation": 15,
+        "news": 15,
+        "portfolio_fit": 15,
     },
-    "stub_scores": {"news": 9, "portfolio_fit": 12},
+    "stub_scores": {"news": 5, "portfolio_fit": 7},
     "action_thresholds": {
-        "strong_buy": 85, "buy_candidate": 70, "hold": 50, "reduce": 35,
+        "strong_buy": 85,
+        "buy_candidate": 70,
+        "hold": 50,
+        "reduce": 35,
     },
     "data_quality_thresholds": {
-        "minimum_to_buy": 0.75, "minimum_to_recommend": 0.50,
+        "minimum_to_buy": 0.75,
+        "minimum_to_recommend": 0.50,
     },
     "confidence_thresholds": {"minimum_to_buy": 0.65},
     "risk_policy": {
@@ -57,6 +67,9 @@ def make_initial_state(
         strategy_version=strategy_version,
         prompt_version="v0.1.0",
         strategy_config=strategy_config or _DEFAULT_SCORING_CONFIG,
+        memory_context=None,
+        memory_count=0,
+        memory_summary=None,
         previous_thesis=None,
         last_recommendation=None,
         past_mistakes=[],
@@ -89,6 +102,7 @@ async def run_research_for_run(
     strategy_version: str,
     market_provider: MarketDataProvider | None = None,
     fundamentals_provider: FundamentalsProvider | None = None,
+    memory_store: MemoryStore | None = None,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
@@ -97,13 +111,14 @@ async def run_research_for_run(
     """
     # Load strategy config once for the whole run
     from db.repositories import StrategyVersionRepository
+
     sv_repo = StrategyVersionRepository(session)
     sv = await sv_repo.get_by_version(strategy_version)
     strategy_config = dict(sv.scoring_config_json) if sv and sv.scoring_config_json else {}
     if not strategy_config:
         strategy_config = _DEFAULT_SCORING_CONFIG
 
-    graph = build_graph_for_session(session, market_provider, fundamentals_provider)
+    graph = build_graph_for_session(session, market_provider, fundamentals_provider, memory_store)
     results: dict[str, Any] = {"symbols_completed": [], "symbols_failed": [], "errors": []}
 
     for ticker in tickers:

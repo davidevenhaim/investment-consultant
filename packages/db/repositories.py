@@ -1,4 +1,5 @@
 """Repository layer — all DB access goes through these classes. No raw queries in routes."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +13,7 @@ from db.models import (
     AuditLog,
     InvestorProfile,
     JobEvent,
+    MemoryIndexEvent,
     NeutralRecommendation,
     PromptVersion,
     ResearchRun,
@@ -60,14 +62,10 @@ class StrategyVersionRepository:
     async def activate(self, version_id: uuid.UUID) -> StrategyVersion:
         """Deactivate all others then activate this one. Enforces single-active invariant."""
         await self._s.execute(
-            update(StrategyVersion)
-            .where(StrategyVersion.id != version_id)
-            .values(is_active=False)
+            update(StrategyVersion).where(StrategyVersion.id != version_id).values(is_active=False)
         )
         await self._s.execute(
-            update(StrategyVersion)
-            .where(StrategyVersion.id == version_id)
-            .values(is_active=True)
+            update(StrategyVersion).where(StrategyVersion.id == version_id).values(is_active=True)
         )
         await self._s.flush()
         result = await self._s.execute(
@@ -132,9 +130,7 @@ class WatchlistRepository:
         return list(result.scalars().all())
 
     async def list_all(self) -> list[WatchlistSymbol]:
-        result = await self._s.execute(
-            select(WatchlistSymbol).order_by(WatchlistSymbol.symbol)
-        )
+        result = await self._s.execute(select(WatchlistSymbol).order_by(WatchlistSymbol.symbol))
         return list(result.scalars().all())
 
     async def get_by_symbol(self, symbol: str) -> WatchlistSymbol | None:
@@ -232,9 +228,7 @@ class ResearchRunRepository:
         await self._s.refresh(run)
         return run
 
-    async def add_tickers(
-        self, run_id: uuid.UUID, symbols: list[str]
-    ) -> list[ResearchRunTicker]:
+    async def add_tickers(self, run_id: uuid.UUID, symbols: list[str]) -> list[ResearchRunTicker]:
         tickers = [
             ResearchRunTicker(
                 research_run_id=run_id,
@@ -259,10 +253,7 @@ class ResearchRunRepository:
 
     async def list_recent(self, limit: int = 20, offset: int = 0) -> list[ResearchRun]:
         result = await self._s.execute(
-            select(ResearchRun)
-            .order_by(ResearchRun.created_at.desc())
-            .limit(limit)
-            .offset(offset)
+            select(ResearchRun).order_by(ResearchRun.created_at.desc()).limit(limit).offset(offset)
         )
         return list(result.scalars().all())
 
@@ -279,17 +270,16 @@ class ResearchRunRepository:
         if status == ResearchRunStatus.RUNNING:
             values["started_at"] = datetime.now(UTC)
         terminal = (
-            ResearchRunStatus.COMPLETED, ResearchRunStatus.FAILED, ResearchRunStatus.CANCELLED
+            ResearchRunStatus.COMPLETED,
+            ResearchRunStatus.FAILED,
+            ResearchRunStatus.CANCELLED,
         )
         if status in terminal:
             values["finished_at"] = datetime.now(UTC)
         if error_message:
             values["error_message"] = error_message
-        await self._s.execute(
-            update(ResearchRun).where(ResearchRun.id == run_id).values(**values)
-        )
+        await self._s.execute(update(ResearchRun).where(ResearchRun.id == run_id).values(**values))
         await self._s.flush()
-
 
     async def update_ticker_status(
         self,
@@ -390,3 +380,31 @@ class AuditLogRepository:
         self._s.add(log)
         await self._s.flush()
         return log
+
+
+class MemoryIndexEventRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def create(
+        self,
+        entity_type: str,
+        status: str,
+        entity_id: uuid.UUID | None = None,
+        symbol: str | None = None,
+        collection_name: str = "",
+        chroma_document_id: str | None = None,
+        error_message: str | None = None,
+    ) -> MemoryIndexEvent:
+        ev = MemoryIndexEvent(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            symbol=symbol,
+            collection_name=collection_name,
+            chroma_document_id=chroma_document_id,
+            status=status,
+            error_message=error_message,
+        )
+        self._s.add(ev)
+        await self._s.flush()
+        return ev

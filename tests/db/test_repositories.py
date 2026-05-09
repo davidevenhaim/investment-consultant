@@ -1,4 +1,5 @@
 """Repository tests and seed idempotency — require DB."""
+
 from datetime import UTC
 
 import pytest
@@ -132,5 +133,6 @@ async def test_neutral_recommendation_score_validation_via_check(db_session: Asy
     )
     db_session.add(bad_rec)
     from sqlalchemy.exc import IntegrityError
+
     with pytest.raises(IntegrityError):
         await db_session.flush()

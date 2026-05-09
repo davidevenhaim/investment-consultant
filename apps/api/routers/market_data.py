@@ -1,4 +1,5 @@
 """Market data endpoint — minimal read-only view of stored price history."""
+
 from typing import Any
 
 from core.responses import api_response

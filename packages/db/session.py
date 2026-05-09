@@ -20,6 +20,7 @@ def init_db(database_url: str) -> None:
 def get_engine() -> AsyncEngine:
     if _engine is None:
         from core.config import get_settings
+
         init_db(get_settings().database_url)
     assert _engine is not None
     return _engine

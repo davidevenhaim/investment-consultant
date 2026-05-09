@@ -53,7 +53,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/investment
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chroma
-      CHROMA_PORT: "8001"
+      CHROMA_PORT: "8000"
       ENVIRONMENT: development
     depends_on:
       postgres:
@@ -77,7 +77,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/investment
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chroma
-      CHROMA_PORT: "8001"
+      CHROMA_PORT: "8000"
       ENVIRONMENT: development
     depends_on:
       postgres:
@@ -103,7 +103,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/investment
       REDIS_URL: redis://redis:6379/0
       CHROMA_HOST: chroma
-      CHROMA_PORT: "8001"
+      CHROMA_PORT: "8000"
       ENVIRONMENT: development
     depends_on:
       - redis

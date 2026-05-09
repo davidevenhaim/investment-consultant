@@ -1,4 +1,5 @@
 """All SQLAlchemy ORM models for the investment research system."""
+
 import datetime as dt
 import uuid
 from datetime import datetime
@@ -31,6 +32,7 @@ from db.enums import AssetType, ResearchRunStatus, RiskLevel, TickerRunStatus
 __all__ = [
     "MarketPrice",
     "CompanyFundamentals",
+    "MemoryIndexEvent",
     "StrategyVersion",
     "PromptVersion",
     "WatchlistSymbol",
@@ -49,7 +51,9 @@ class MarketPrice(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "market_prices"
     __table_args__ = (
         UniqueConstraint(
-            "symbol", "price_date", "provider",
+            "symbol",
+            "price_date",
+            "provider",
             name="uq_market_price_symbol_date_provider",
         ),
         Index("ix_market_prices_symbol_date", "symbol", "price_date"),
@@ -72,7 +76,9 @@ class CompanyFundamentals(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "company_fundamentals"
     __table_args__ = (
         UniqueConstraint(
-            "symbol", "as_of_date", "provider",
+            "symbol",
+            "as_of_date",
+            "provider",
             name="uq_company_fundamentals_symbol_date_provider",
         ),
         Index("ix_company_fundamentals_symbol_date", "symbol", "as_of_date"),
@@ -412,6 +418,29 @@ class AuditLog(Base, UUIDMixin):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     correlation_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MemoryIndexEvent(Base, UUIDMixin):
+    """Audit trail for ChromaDB indexing. Rows with status=FAILED can be replayed."""
+
+    __tablename__ = "memory_index_events"
+    __table_args__ = (
+        Index("ix_memory_index_events_entity", "entity_type", "entity_id"),
+        Index("ix_memory_index_events_symbol", "symbol"),
+        Index("ix_memory_index_events_status", "status"),
+        Index("ix_memory_index_events_created_at", "created_at"),
+    )
+
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    collection_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    chroma_document_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # INDEXED | FAILED
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )

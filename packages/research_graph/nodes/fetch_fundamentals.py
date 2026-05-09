@@ -1,4 +1,5 @@
 """FetchFundamentals — fetches real company fundamentals via fundamentals service."""
+
 from collections.abc import Callable
 from typing import Any
 
@@ -21,9 +22,7 @@ def make_fetch_fundamentals(
     async def fetch_fundamentals(state: ResearchState) -> dict[str, Any]:
         symbol = state["symbol"]
         try:
-            snapshot = await ensure_company_fundamentals(
-                session, symbol, provider=provider
-            )
+            snapshot = await ensure_company_fundamentals(session, symbol, provider=provider)
             dq = snapshot.completeness_score
 
             logger.info(

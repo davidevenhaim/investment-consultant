@@ -1,4 +1,5 @@
 """Fundamentals endpoint — read-only view of stored company fundamentals."""
+
 from typing import Any
 
 from core.responses import api_response

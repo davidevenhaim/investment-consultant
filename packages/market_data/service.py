@@ -1,4 +1,5 @@
 """Market data ingestion service — ensures price history exists and returns it."""
+
 import datetime as dt
 
 from core.logging import get_logger

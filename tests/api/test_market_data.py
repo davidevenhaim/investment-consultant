@@ -1,4 +1,5 @@
 """Market data API endpoint tests."""
+
 import pytest
 
 
