@@ -29,6 +29,7 @@ async def index_recommendation_report(
     personalized_rec_id: str | None,
     price_at_recommendation: float | None,
     strategy_version_id: str | None,
+    llm_analysis: Any = None,
     store: MemoryStore | None = None,
 ) -> bool:
     """
@@ -52,6 +53,7 @@ async def index_recommendation_report(
             personalized_rec_id=personalized_rec_id,
             price_at_recommendation=price_at_recommendation,
             strategy_version_id=strategy_version_id,
+            llm_analysis=llm_analysis,
         )
         await store.add_document(RECOMMENDATION_REPORTS, doc)
         logger.info("memory_indexed", symbol=symbol, doc_id=doc.id, run_id=run_id)

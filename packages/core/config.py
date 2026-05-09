@@ -23,8 +23,12 @@ class Settings(BaseSettings):
     chroma_host: str = "localhost"
     chroma_port: int = 8001
 
-    # Anthropic
+    # Anthropic / LLM
     anthropic_api_key: str = ""
+    llm_enabled: bool = False
+    llm_model: str = "claude-sonnet-4-20250514"
+    llm_timeout_seconds: int = 30
+    llm_max_retries: int = 2
 
     # IBKR (read-only, never write)
     ibkr_host: str = "localhost"

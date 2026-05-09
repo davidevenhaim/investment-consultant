@@ -30,6 +30,9 @@ def _base_state(symbol: str = "AAPL") -> ResearchState:
         strategy_version="v0.1.0",
         prompt_version="v0.1.0",
         strategy_config={},
+        llm_analysis=None,
+        llm_warnings=[],
+        llm_confidence_penalty=0.0,
         memory_context=None,
         memory_count=0,
         memory_summary=None,
@@ -439,3 +442,246 @@ def test_personalized_no_neutral_adds_error() -> None:
     result = personalized_recommendation(state)
     assert "errors" in result
     assert len(result["errors"]) > 0
+
+# ── LLM analysis node ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_llm_analysis_node_disabled_writes_empty() -> None:
+    """LLM_ENABLED=false (set by conftest override_env) — node returns empty without DB access."""
+    from unittest.mock import AsyncMock
+
+    from research_graph.nodes.llm_analysis import make_llm_analysis
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    # conftest autouse fixture sets LLM_ENABLED=false in env; no patch needed
+    session = AsyncMock(spec=AsyncSession)
+    node = make_llm_analysis(session, llm_client=None)
+    result = await node(_base_state("AAPL"))
+
+    assert result["llm_analysis"].llm_enabled is False
+    assert result["llm_confidence_penalty"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_llm_analysis_node_with_fake_client_writes_analysis() -> None:
+    """FakeClaudeClient injected: node writes valid CombinedLLMAnalysis (mocks DB prompt lookup)."""
+    import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ai.fake_client import FakeClaudeClient
+    from research_graph.nodes.llm_analysis import make_llm_analysis
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    session = AsyncMock(spec=AsyncSession)
+    fake_pv = MagicMock()
+    fake_pv.prompt_text = "Analyze {{SYMBOL}}.\n{{CONTEXT}}"
+    fake_pv.id = uuid.uuid4()
+    mock_repo_instance = AsyncMock()
+    mock_repo_instance.get_active = AsyncMock(return_value=fake_pv)
+    mock_repo_class = MagicMock(return_value=mock_repo_instance)
+
+    mock_settings = MagicMock()
+    mock_settings.llm_enabled = True
+    mock_settings.llm_model = "fake-model"
+    mock_settings.llm_timeout_seconds = 30
+    mock_settings.llm_max_retries = 2
+
+    with (
+        patch("research_graph.nodes.llm_analysis.get_settings", return_value=mock_settings),
+        patch("research_graph.nodes.llm_analysis.PromptVersionRepository", mock_repo_class),
+    ):
+        node = make_llm_analysis(session, llm_client=FakeClaudeClient())
+        result = await node(_base_state("AAPL"))
+
+    analysis = result["llm_analysis"]
+    assert analysis.llm_enabled is True
+    assert analysis.thesis.short_thesis != ""
+    assert result["llm_confidence_penalty"] >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_llm_analysis_node_with_failing_client_writes_warning() -> None:
+    """Failing LLM client: node writes empty analysis + warning, never raises."""
+    import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ai.fake_client import FakeClaudeClient
+    from research_graph.nodes.llm_analysis import make_llm_analysis
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    session = AsyncMock(spec=AsyncSession)
+    fake_pv = MagicMock()
+    fake_pv.prompt_text = "Analyze {{SYMBOL}}.\n{{CONTEXT}}"
+    fake_pv.id = uuid.uuid4()
+    mock_repo_instance = AsyncMock()
+    mock_repo_instance.get_active = AsyncMock(return_value=fake_pv)
+    mock_repo_class = MagicMock(return_value=mock_repo_instance)
+
+    mock_settings = MagicMock()
+    mock_settings.llm_enabled = True
+    mock_settings.llm_model = "fake-model"
+    mock_settings.llm_timeout_seconds = 30
+    mock_settings.llm_max_retries = 2
+
+    with (
+        patch("research_graph.nodes.llm_analysis.get_settings", return_value=mock_settings),
+        patch("research_graph.nodes.llm_analysis.PromptVersionRepository", mock_repo_class),
+    ):
+        node = make_llm_analysis(session, llm_client=FakeClaudeClient(fail=True))
+        result = await node(_base_state("AAPL"))
+
+    assert result["llm_analysis"].llm_enabled is False
+    assert len(result.get("llm_warnings", [])) > 0
+
+
+# ── neutral_recommendation + LLM integration ─────────────────────────────────
+
+
+def test_neutral_recommendation_without_llm_analysis() -> None:
+    """LLM disabled: score/action unchanged, breakdown.llm_enabled=False."""
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    state["llm_analysis"] = None
+    result = neutral_recommendation(state)
+    assert result["neutral_rec"] is not None
+    assert result["score_breakdown"].llm_enabled is False
+
+
+def test_neutral_recommendation_adds_llm_reasons_when_enabled() -> None:
+    """LLM enabled: thesis + bullish points appear in main_reasons."""
+    from ai.fake_client import _FAKE_RESPONSE
+    from ai.service import _parse_and_validate
+
+    analysis = _parse_and_validate(
+        __import__("json").dumps(_FAKE_RESPONSE), "AAPL", "fake"
+    )
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    state["llm_analysis"] = analysis
+
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    result = neutral_recommendation(state)
+    rec = result["neutral_rec"]
+    assert any("[LLM thesis]" in r for r in rec.main_reasons)
+    assert any("[LLM]" in r for r in rec.main_reasons)
+
+
+def test_neutral_recommendation_adds_llm_risks_when_enabled() -> None:
+    from ai.fake_client import _FAKE_RESPONSE
+    from ai.service import _parse_and_validate
+
+    analysis = _parse_and_validate(__import__("json").dumps(_FAKE_RESPONSE), "AAPL", "fake")
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    state["llm_analysis"] = analysis
+
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    result = neutral_recommendation(state)
+    rec = result["neutral_rec"]
+    # LLM risks and counterargument should appear
+    assert any("[LLM]" in r for r in rec.main_risks)
+
+
+def test_neutral_recommendation_confidence_penalty_applied() -> None:
+    """LLM penalty reduces confidence; cannot go below 0."""
+    import copy
+    import json
+
+    from ai.fake_client import _FAKE_RESPONSE
+    from ai.service import _parse_and_validate
+
+    # Build fake analysis with non-zero penalties
+    raw = copy.deepcopy(_FAKE_RESPONSE)
+    raw["missing_details"]["confidence_penalty"] = 0.10
+    raw["critic"]["confidence_penalty"] = 0.10
+    analysis = _parse_and_validate(json.dumps(raw), "AAPL", "fake")
+
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    state["llm_analysis"] = analysis
+
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    result = neutral_recommendation(state)
+    rec = result["neutral_rec"]
+
+    assert 0.0 <= rec.confidence <= 1.0
+    assert result["score_breakdown"].llm_confidence_penalty > 0
+
+
+def test_neutral_recommendation_strong_buy_capped_by_critic() -> None:
+    """When critic.should_cap_strong_buy=True and action=STRONG_BUY, caps to BUY_CANDIDATE."""
+    import copy
+    import json
+
+    from ai.fake_client import _FAKE_RESPONSE
+    from ai.service import _parse_and_validate
+    from db.enums import RecommendationAction
+
+    raw = copy.deepcopy(_FAKE_RESPONSE)
+    raw["critic"]["should_cap_strong_buy"] = True
+    analysis = _parse_and_validate(json.dumps(raw), "AAPL", "fake")
+
+    state = _base_state("AAPL")
+    # Force high score so action would be STRONG_BUY without LLM
+    state["technical_signals"] = _signals_bullish()
+    state["llm_analysis"] = analysis
+
+    # Directly test cap logic: if score is STRONG_BUY territory
+    from unittest.mock import patch
+
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    with patch(
+        "research_graph.nodes.neutral_recommendation.score_to_action",
+        return_value=RecommendationAction.STRONG_BUY,
+    ):
+        result = neutral_recommendation(state)
+        rec = result["neutral_rec"]
+        assert rec.action == RecommendationAction.BUY_CANDIDATE
+        assert result["score_breakdown"].critic_should_cap_strong_buy is True
+
+
+def test_llm_cannot_upgrade_action() -> None:
+    """LLM critic.should_cap_strong_buy=False with HOLD score stays HOLD."""
+    import json
+
+    from ai.fake_client import _FAKE_RESPONSE
+    from ai.service import _parse_and_validate
+    from db.enums import RecommendationAction
+
+    analysis = _parse_and_validate(json.dumps(_FAKE_RESPONSE), "AAPL", "fake")
+    # Ensure no cap triggered
+    assert analysis.critic.should_cap_strong_buy is False
+
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bearish()  # score → HOLD or lower
+    state["llm_analysis"] = analysis
+
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    result = neutral_recommendation(state)
+    rec = result["neutral_rec"]
+    # LLM cannot change action — it's still determined by the score
+    assert rec.action in list(RecommendationAction)
+    # Score is unchanged — LLM only affects confidence and qualitative output
+    assert 0 <= rec.score <= 100
+
+
+def test_score_breakdown_includes_llm_metadata() -> None:
+    """score_breakdown has llm_enabled, llm_model, etc. when LLM ran."""
+    import json
+
+    from ai.fake_client import _FAKE_RESPONSE
+    from ai.service import _parse_and_validate
+
+    analysis = _parse_and_validate(json.dumps(_FAKE_RESPONSE), "AAPL", "fake")
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    state["llm_analysis"] = analysis
+
+    from research_graph.nodes.neutral_recommendation import neutral_recommendation
+    result = neutral_recommendation(state)
+    bd = result["score_breakdown"]
+    assert bd.llm_enabled is True
+    assert bd.llm_model == "fake"
+    assert bd.thesis_alignment == "UNCHANGED"

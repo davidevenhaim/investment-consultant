@@ -1,4 +1,4 @@
-"""NeutralRecommendation — deterministic scoring engine. No LLM involved."""
+"""NeutralRecommendation — deterministic scoring engine. LLM is analyst only, not judge."""
 
 from typing import Any
 
@@ -429,17 +429,74 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             risks.append(f"Negative 3-month momentum ({r3m:.1%}).")
         risks.append("News analysis pending (M8). Portfolio context pending (M9).")
 
-        rec = NeutralRecState(
-            action=action,
-            score=int(total),
-            confidence=round(confidence, 3),
-            final_reason=(
+        # ── M7: Apply LLM qualitative output ────────────────────────────────
+        llm: Any = state.get("llm_analysis")
+        llm_warnings: list[str] = list(state.get("llm_warnings") or [])
+
+        if llm is not None and llm.llm_enabled:
+            # Add LLM qualitative reasons (never numeric score/action)
+            thesis = llm.thesis
+            if thesis.short_thesis:
+                reasons.insert(0, f"[LLM thesis] {thesis.short_thesis}")
+            reasons.extend([f"[LLM] {p}" for p in thesis.bullish_points[:3]])
+            risks.extend([f"[LLM] {r}" for r in llm.risk.key_risks[:3]])
+            if llm.critic.strongest_counterargument:
+                risks.append(f"[LLM critic] {llm.critic.strongest_counterargument}")
+
+            # Add LLM missing details
+            missing_details.extend(llm.missing_details.blocking_missing_details)
+            missing_details.extend(llm.missing_details.non_blocking_missing_details)
+
+            # Apply confidence penalty (additive, hard-capped — LLM never raises confidence)
+            llm_penalty = llm.total_confidence_penalty
+            confidence = round(max(0.0, confidence - llm_penalty), 3)
+
+            # STRONG_BUY cap — only downgrade, never upgrade (clarification point 5)
+            cap_applied = False
+            if llm.critic.should_cap_strong_buy and action == RecommendationAction.STRONG_BUY:
+                action = RecommendationAction.BUY_CANDIDATE
+                cap_applied = True
+
+            breakdown = ScoreBreakdown(
+                **{
+                    **breakdown.model_dump(),
+                    "llm_enabled": True,
+                    "llm_model": llm.llm_model,
+                    "llm_analysis_quality": llm.analysis_quality_score,
+                    "llm_confidence_penalty": llm_penalty,
+                    "critic_should_cap_strong_buy": cap_applied,
+                    "thesis_alignment": thesis.previous_thesis_alignment,
+                    "strongest_counterargument": llm.critic.strongest_counterargument,
+                    "llm_warnings": llm_warnings,
+                },
+            )
+
+            final_reason = (
+                f"Score {total}/100 ({action.value}). "
+                f"Technical: {tech:.0f}/20, Risk: {risk:.0f}/15, "
+                f"Fundamental: {fund:.0f}/20, Valuation: {val:.0f}/15. "
+                f"Thesis: {thesis.short_thesis[:120]} "
+                f"Previous recommendation: {thesis.previous_thesis_alignment}. "
+                f"LLM confidence penalty: -{llm_penalty:.2f}. "
+                f"Analysis completeness: {completeness:.0%}."
+            )
+        else:
+            breakdown = ScoreBreakdown(
+                **{**breakdown.model_dump(), "llm_enabled": False, "llm_warnings": llm_warnings}
+            )
+            final_reason = (
                 f"Score {total}/100 ({action.value}). "
                 f"Technical (real): {tech:.0f}/20, Risk (real): {risk:.0f}/15, "
                 f"Fundamental (real): {fund:.0f}/20, Valuation (real): {val:.0f}/15. "
                 f"News stub: {news_stub:.0f}/15, Portfolio stub: {portfolio_fit_stub:.0f}/15. "
                 f"Analysis completeness: {completeness:.0%}."
-            ),
+            )
+
+        rec = NeutralRecState(
+            action=action,
+            score=int(total),
+            confidence=round(confidence, 3),
+            final_reason=final_reason,
             score_breakdown=breakdown,
             main_reasons=reasons,
             main_risks=risks,

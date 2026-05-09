@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from ai.interfaces import LLMClient
 from core.logging import get_logger
 from db.enums import TickerRunStatus
 from db.models import ResearchRun, ResearchRunTicker
@@ -67,6 +68,9 @@ def make_initial_state(
         strategy_version=strategy_version,
         prompt_version="v0.1.0",
         strategy_config=strategy_config or _DEFAULT_SCORING_CONFIG,
+        llm_analysis=None,
+        llm_warnings=[],
+        llm_confidence_penalty=0.0,
         memory_context=None,
         memory_count=0,
         memory_summary=None,
@@ -103,6 +107,7 @@ async def run_research_for_run(
     market_provider: MarketDataProvider | None = None,
     fundamentals_provider: FundamentalsProvider | None = None,
     memory_store: MemoryStore | None = None,
+    llm_client: LLMClient | None = None,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
@@ -118,7 +123,9 @@ async def run_research_for_run(
     if not strategy_config:
         strategy_config = _DEFAULT_SCORING_CONFIG
 
-    graph = build_graph_for_session(session, market_provider, fundamentals_provider, memory_store)
+    graph = build_graph_for_session(
+        session, market_provider, fundamentals_provider, memory_store, llm_client
+    )
     results: dict[str, Any] = {"symbols_completed": [], "symbols_failed": [], "errors": []}
 
     for ticker in tickers:

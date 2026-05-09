@@ -62,6 +62,78 @@ _PROMPT_NAME: str = "research"
 _PROMPT_VERSION: str = "v0.1.0"
 _PROMPT_TEXT: str = "Placeholder — implemented in M7."
 
+_COMBINED_ANALYSIS_NAME: str = "combined_analysis"
+_COMBINED_ANALYSIS_VERSION: str = "v0.1.0"
+_COMBINED_ANALYSIS_PROMPT: str = """\
+CRITICAL RULES — READ BEFORE RESPONDING:
+1. You are a research analyst. You do NOT make final buy/sell/hold decisions.
+2. Do NOT output any field named "action", "recommendation", "buy", "sell", "hold",
+   "target_price", or "position_size". These fields will cause validation failure.
+3. Do NOT invent news, earnings events, analyst ratings, insider transactions, or filings.
+   If you do not have data for something, say it is missing.
+4. Do NOT speculate beyond the data provided in this context.
+5. Base all analysis ONLY on the data provided below.
+6. News data is NOT available yet. Do not reference news events.
+7. Portfolio context is NOT available yet. Do not reference position size.
+8. Respond ONLY with valid JSON matching the schema exactly. No preamble. No markdown.
+9. Debt-to-equity values in the context are already normalized ratios (e.g., 0.80x means 80%).
+   Do not convert or re-interpret them.
+
+=== RESEARCH CONTEXT FOR {{SYMBOL}} ===
+{{CONTEXT}}
+
+=== REQUIRED JSON SCHEMA ===
+Respond with a single JSON object with exactly these top-level keys:
+"thesis", "risk", "missing_details", "critic"
+
+thesis:
+{
+  "symbol": string,
+  "short_thesis": string (1-2 sentences, evidence-based only),
+  "bullish_points": list[string] (max 5, data-supported only),
+  "bearish_points": list[string] (max 5, data-supported only),
+  "what_changed_since_last_run": list[string] (compare to previous memory if available),
+  "previous_thesis_alignment": one of ["NO_PREVIOUS_THESIS","UNCHANGED",
+    "IMPROVED","WORSENED","MIXED"],
+  "confidence": float between 0.0 and 1.0
+}
+
+risk:
+{
+  "symbol": string,
+  "key_risks": list[string] (top 3-5 risks, data-based),
+  "valuation_risks": list[string],
+  "business_risks": list[string],
+  "technical_risks": list[string],
+  "near_term_watch_items": list[string],
+  "confidence": float between 0.0 and 1.0
+}
+
+missing_details:
+{
+  "symbol": string,
+  "blocking_missing_details": list[string] (items that would change the analysis),
+  "non_blocking_missing_details": list[string] (items that would help but aren't blocking),
+  "should_reduce_confidence": boolean,
+  "confidence_penalty": float between 0.0 and 0.15 (how much to reduce confidence),
+  "confidence": float between 0.0 and 1.0
+}
+
+critic:
+{
+  "symbol": string,
+  "strongest_counterargument": string (best argument AGAINST the bullish thesis),
+  "weak_points_in_analysis": list[string],
+  "potential_overclaims": list[string],
+  "should_cap_strong_buy": boolean (true only if analysis quality is very low or risks are extreme),
+  "should_reduce_confidence": boolean,
+  "confidence_penalty": float between 0.0 and 0.15,
+  "confidence": float between 0.0 and 1.0
+}
+
+Respond now with only the JSON object. No other text.\
+"""
+
 _WATCHLIST: list[dict[str, str]] = [
     {"symbol": "AAPL", "company_name": "Apple Inc.", "exchange": "NASDAQ"},
     {"symbol": "NVDA", "company_name": "NVIDIA Corporation", "exchange": "NASDAQ"},
@@ -123,6 +195,25 @@ async def seed() -> None:
             logger.info("seed_prompt_created", name=pv.name, version=pv.version)
         else:
             logger.info("seed_prompt_exists", name=existing_pv.name)
+
+        # M7: combined_analysis prompt for LLM structured analysis node
+        existing_ca = await pv_repo.get_by_name_version(
+            _COMBINED_ANALYSIS_NAME, _COMBINED_ANALYSIS_VERSION
+        )
+        if existing_ca is None:
+            from ai.schemas import CombinedLLMAnalysis  # noqa: PLC0415
+            ca = await pv_repo.create(
+                name=_COMBINED_ANALYSIS_NAME,
+                version=_COMBINED_ANALYSIS_VERSION,
+                prompt_text=_COMBINED_ANALYSIS_PROMPT,
+                output_schema=CombinedLLMAnalysis.model_json_schema(),
+                is_active=True,
+            )
+            logger.info(
+                "seed_combined_analysis_prompt_created", name=ca.name, version=ca.version
+            )
+        else:
+            logger.info("seed_combined_analysis_prompt_exists", name=existing_ca.name)
 
         result = await session.execute(
             select(InvestorProfile).where(InvestorProfile.name == "default").limit(1)

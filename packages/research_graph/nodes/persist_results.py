@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.logging import get_logger
-from db.enums import TickerRunStatus
-from db.models import MemoryIndexEvent, ResearchRunTicker
+from db.enums import EvidenceType, TickerRunStatus
+from db.models import MemoryIndexEvent, RecommendationEvidence, ResearchRunTicker
 from db.models import NeutralRecommendation as NeutralRecModel
 from db.models import PersonalizedRecommendation as PersonalizedRecModel
 from db.repositories import StrategyVersionRepository
@@ -100,6 +100,30 @@ def make_persist_results(
                     action=personalized.personal_action.value,
                 )
 
+            # Persist LLM evidence row (when LLM enabled)
+            llm: Any = state.get("llm_analysis")
+            if llm is not None and llm.llm_enabled and neutral_rec_id is not None:
+                from core.config import get_settings as _gs
+                _s = _gs()
+                thesis_align = llm.thesis.previous_thesis_alignment
+                ev = RecommendationEvidence(
+                    recommendation_id=neutral_rec_id,
+                    recommendation_type="NEUTRAL",
+                    evidence_type=EvidenceType.LLM_ANALYSIS.value,
+                    source=f"claude/{_s.llm_model}",
+                    summary=(
+                        f"Combined LLM analysis: thesis_alignment={thesis_align}, "
+                        f"penalty={llm.total_confidence_penalty:.3f}, "
+                        f"quality={llm.analysis_quality_score:.2f}"
+                    ),
+                    payload_json={
+                        **llm.model_dump(),
+                        "prompt_version_id": state.get("llm_prompt_version_id"),
+                    },
+                )
+                session.add(ev)
+                await session.flush()
+
             # Update ticker status to COMPLETED
             ticker = await session.get(ResearchRunTicker, ticker_db_id)
             if ticker is not None:
@@ -154,6 +178,7 @@ async def _index_to_chroma(
     neutral = state.get("neutral_rec")
     personalized = state.get("personalized_rec")
 
+    llm_analysis = state.get("llm_analysis")
     success = await index_recommendation_report(
         symbol=symbol,
         neutral_rec=neutral,
@@ -163,6 +188,7 @@ async def _index_to_chroma(
         personalized_rec_id=str(personalized_rec_id) if personalized_rec_id else None,
         price_at_recommendation=price_at_rec,
         strategy_version_id=str(sv_id) if sv_id else None,
+        llm_analysis=llm_analysis,
         store=store,
     )
 

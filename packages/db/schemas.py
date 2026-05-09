@@ -128,6 +128,7 @@ class NeutralRecommendationResponse(_OrmBase):
     main_reasons_json: list[Any]
     main_risks_json: list[Any]
     missing_details_json: list[Any]
+    score_breakdown_json: dict[str, Any]
     as_of_time: datetime
     price_at_recommendation: float | None
     data_quality_score: float | None

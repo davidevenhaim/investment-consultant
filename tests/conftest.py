@@ -24,6 +24,7 @@ def override_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHROMA_HOST", "localhost")
     monkeypatch.setenv("CHROMA_PORT", "8001")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("LLM_ENABLED", "false")
     from core.config import get_settings
 
     get_settings.cache_clear()

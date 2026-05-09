@@ -28,6 +28,15 @@ class ScoreBreakdown(BaseModel):
     completed_components: list[str] = []
     missing_components: list[str] = []
     component_quality_scores: dict[str, float] = {}
+    # M7 LLM metadata
+    llm_enabled: bool = False
+    llm_model: str | None = None
+    llm_analysis_quality: float = 0.0
+    llm_confidence_penalty: float = 0.0
+    critic_should_cap_strong_buy: bool = False
+    thesis_alignment: str = "NO_PREVIOUS_THESIS"
+    strongest_counterargument: str = ""
+    llm_warnings: list[str] = []
 
 
 class NeutralRecState(BaseModel):
@@ -115,6 +124,11 @@ class ResearchState(TypedDict):
     strategy_version: str
     prompt_version: str
     strategy_config: dict[str, Any]  # scoring config loaded from strategy_versions table
+
+    # ── LLM analysis (M7+) ──────────────────────────────────────────────────
+    llm_analysis: Any  # CombinedLLMAnalysis | None — deferred import
+    llm_warnings: Annotated[list[str], operator.add]
+    llm_confidence_penalty: float
 
     # ── retrieved memory (M6+) ───────────────────────────────────────────────
     memory_context: Any  # MemoryContext | None — deferred import

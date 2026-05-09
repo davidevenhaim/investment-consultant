@@ -16,6 +16,7 @@ def build_recommendation_document(
     personalized_rec_id: str | None,
     price_at_recommendation: float | None,
     strategy_version_id: str | None,
+    llm_analysis: Any = None,
 ) -> MemoryDocument:
     """
     Build a structured human-readable document from a recommendation.
@@ -82,6 +83,27 @@ def build_recommendation_document(
             "Final reason:",
             neutral_rec.final_reason,
         ]
+
+    # LLM analysis summary (capped at 300 chars total addition)
+    if llm_analysis is not None and getattr(llm_analysis, "llm_enabled", False):
+        thesis = llm_analysis.thesis
+        risk = llm_analysis.risk
+        critic = llm_analysis.critic
+        llm_lines = [
+            "",
+            "LLM Analysis:",
+            f"Thesis: {thesis.short_thesis[:120]}",
+        ]
+        for bp in thesis.bullish_points[:2]:
+            llm_lines.append(f"Bullish: {bp[:80]}")
+        for br in thesis.bearish_points[:2]:
+            llm_lines.append(f"Bearish: {br[:80]}")
+        for kr in risk.key_risks[:2]:
+            llm_lines.append(f"Risk: {kr[:80]}")
+        if critic.strongest_counterargument:
+            llm_lines.append(f"Counterargument: {critic.strongest_counterargument[:100]}")
+        llm_lines.append(f"Thesis alignment vs previous: {thesis.previous_thesis_alignment}")
+        lines.extend(llm_lines)
 
     content = "\n".join(lines)
 

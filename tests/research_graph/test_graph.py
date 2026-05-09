@@ -312,3 +312,233 @@ async def test_chroma_failure_does_not_crash_run(
     # Run completes successfully despite Chroma being down
     assert final["neutral_rec"] is not None
     assert final["memory_count"] == 0
+
+
+# ── M7 LLM graph tests ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_full_graph_with_fake_llm_client(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    """Full graph with FakeClaudeClient completes; LLM analysis written to state."""
+    from ai.fake_client import FakeClaudeClient
+    from db.repositories import PromptVersionRepository
+
+    # Seed the combined_analysis prompt version
+    pv_repo = PromptVersionRepository(db_session)
+    existing = await pv_repo.get_active("combined_analysis")
+    if existing is None:
+        await pv_repo.create(
+            name="combined_analysis",
+            version="v0.1.0",
+            prompt_text="Analyze {{SYMBOL}}.\n{{CONTEXT}}",
+            is_active=True,
+        )
+        await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(
+        db_session,
+        market_provider=market_provider,
+        fundamentals_provider=fund_provider,
+        memory_store=mem_store,
+        llm_client=FakeClaudeClient(),
+    )
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    assert final["neutral_rec"] is not None
+    assert final["llm_analysis"] is not None
+    assert final["llm_analysis"].llm_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_full_graph_with_llm_disabled(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    """LLM disabled (no client, LLM_ENABLED=false from conftest): graph completes."""
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    # conftest autouse sets LLM_ENABLED=false — no explicit patch needed
+    graph = build_graph_for_session(
+        db_session,
+        market_provider=market_provider,
+        fundamentals_provider=fund_provider,
+        memory_store=mem_store,
+        llm_client=None,
+    )
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    assert final["neutral_rec"] is not None
+    assert final["llm_analysis"].llm_enabled is False
+    assert final["score_breakdown"].llm_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_full_graph_with_failing_llm_completes(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    """Failing LLM client: run completes, empty analysis, warning recorded."""
+    from ai.fake_client import FakeClaudeClient
+    from db.repositories import PromptVersionRepository
+
+    pv_repo = PromptVersionRepository(db_session)
+    existing = await pv_repo.get_active("combined_analysis")
+    if existing is None:
+        await pv_repo.create(
+            name="combined_analysis",
+            version="v0.1.0",
+            prompt_text="Analyze {{SYMBOL}}.\n{{CONTEXT}}",
+            is_active=True,
+        )
+        await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(
+        db_session,
+        market_provider=market_provider,
+        fundamentals_provider=fund_provider,
+        memory_store=mem_store,
+        llm_client=FakeClaudeClient(fail=True),
+    )
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    assert final["neutral_rec"] is not None
+    assert final["llm_analysis"].llm_enabled is False
+    assert len(final.get("llm_warnings", [])) > 0
+
+
+@pytest.mark.asyncio
+async def test_score_breakdown_json_has_llm_metadata_when_llm_ran(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    from ai.fake_client import FakeClaudeClient
+    from db.repositories import PromptVersionRepository
+    from sqlalchemy import select
+
+    pv_repo = PromptVersionRepository(db_session)
+    existing = await pv_repo.get_active("combined_analysis")
+    if existing is None:
+        await pv_repo.create(
+            name="combined_analysis",
+            version="v0.1.0",
+            prompt_text="Analyze {{SYMBOL}}.\n{{CONTEXT}}",
+            is_active=True,
+        )
+        await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(
+        db_session,
+        market_provider=market_provider,
+        fundamentals_provider=fund_provider,
+        memory_store=mem_store,
+        llm_client=FakeClaudeClient(),
+    )
+    await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    from db.models import NeutralRecommendation as NeutralRecM
+    result = await db_session.execute(
+        select(NeutralRecM).where(NeutralRecM.research_run_id == run.id)
+    )
+    rec = result.scalar_one()
+    bd = rec.score_breakdown_json
+    assert bd.get("llm_enabled") is True
+    assert bd.get("llm_model") is not None
+
+
+@pytest.mark.asyncio
+async def test_evidence_row_created_when_llm_ran(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    from ai.fake_client import FakeClaudeClient
+    from db.models import RecommendationEvidence
+    from db.repositories import PromptVersionRepository
+    from sqlalchemy import select
+
+    pv_repo = PromptVersionRepository(db_session)
+    existing = await pv_repo.get_active("combined_analysis")
+    if existing is None:
+        await pv_repo.create(
+            name="combined_analysis",
+            version="v0.1.0",
+            prompt_text="Analyze {{SYMBOL}}.\n{{CONTEXT}}",
+            is_active=True,
+        )
+        await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(
+        db_session,
+        market_provider=market_provider,
+        fundamentals_provider=fund_provider,
+        memory_store=mem_store,
+        llm_client=FakeClaudeClient(),
+    )
+    await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    from db.models import NeutralRecommendation as NeutralRecM
+    nr_result = await db_session.execute(
+        select(NeutralRecM).where(NeutralRecM.research_run_id == run.id)
+    )
+    nr = nr_result.scalar_one()
+
+    ev_result = await db_session.execute(
+        select(RecommendationEvidence).where(
+            RecommendationEvidence.recommendation_id == nr.id,
+            RecommendationEvidence.evidence_type == "LLM_ANALYSIS",
+        )
+    )
+    evidence = ev_result.scalar_one_or_none()
+    assert evidence is not None
+    assert evidence.source.startswith("claude/")
+    assert evidence.payload_json.get("llm_enabled") is True
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_row_when_llm_disabled(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    from db.models import NeutralRecommendation as NeutralRecM
+    from db.models import RecommendationEvidence
+    from sqlalchemy import select
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = build_graph_for_session(
+        db_session,
+        market_provider=market_provider,
+        fundamentals_provider=fund_provider,
+        memory_store=mem_store,
+        llm_client=None,
+    )
+    # conftest autouse sets LLM_ENABLED=false — no explicit patch needed
+    await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    nr_result = await db_session.execute(
+        select(NeutralRecM).where(NeutralRecM.research_run_id == run.id)
+    )
+    nr = nr_result.scalar_one()
+    ev_result = await db_session.execute(
+        select(RecommendationEvidence).where(
+            RecommendationEvidence.recommendation_id == nr.id,
+            RecommendationEvidence.evidence_type == "LLM_ANALYSIS",
+        )
+    )
+    evidence = ev_result.scalar_one_or_none()
+    assert evidence is None

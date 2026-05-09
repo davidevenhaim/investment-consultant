@@ -47,6 +47,7 @@ class EvidenceType(StrEnum):
     TECHNICAL_SIGNAL = "TECHNICAL_SIGNAL"
     POLICY_CHECK = "POLICY_CHECK"
     MANUAL_NOTE = "MANUAL_NOTE"
+    LLM_ANALYSIS = "LLM_ANALYSIS"
 
 
 class AssetType(StrEnum):
