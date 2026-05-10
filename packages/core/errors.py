@@ -97,6 +97,11 @@ class IBKRReadOnlyError(IBKRError):
     error_code = "IBKR_READ_ONLY"
 
 
+class IBKRFlexError(IBKRError):
+    """IBKR Flex Query request failed (network, IBKR error response, or parse failure)."""
+    error_code = "IBKR_FLEX_ERROR"
+
+
 # ── Research run errors ───────────────────────────────────────────────────────
 
 

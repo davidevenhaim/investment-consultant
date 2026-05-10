@@ -1,0 +1,64 @@
+# IBKR Gateway — Example Docker Compose snippet for hosted gateway mode
+#
+# This is a TEMPLATE only. Do not use in production without:
+#   1. A real IB Gateway image (not the placeholder below)
+#   2. Credentials managed via Docker secrets or a secret manager
+#   3. Network isolation (gateway must not be reachable from public internet)
+#   4. Health checks confirming gateway is connected before syncing
+#
+# To use:
+#   cp docker-compose.ibkr-gateway.example.yml docker-compose.ibkr-gateway.yml
+#   # Edit with your actual image and config
+#   docker compose -f docker-compose.yml -f docker-compose.ibkr-gateway.yml up -d
+#
+# After starting, create a broker account pointing to this gateway:
+#   POST /api/v1/portfolio/broker-accounts
+#   {
+#     "provider": "IBKR",
+#     "display_name": "Hosted IB Gateway - Paper",
+#     "connection_mode": "HOSTED_GATEWAY",
+#     "host": "ibkr-gateway-example",
+#     "port": 4002,
+#     "client_id": 1,
+#     "readonly": true,
+#     "metadata_json": {
+#       "gateway_container_name": "ibkr-gateway-example",
+#       "secret_ref": "local-dev-placeholder"
+#     }
+#   }
+
+version: "3.9"
+
+services:
+  # PLACEHOLDER — replace with a real IB Gateway image
+  # Options:
+  #   - IBC (https://github.com/IbcAlpha/IBC) with IB Gateway
+  #   - Third-party Docker images that wrap IB Gateway + IBC
+  #   - Build your own from IB Gateway installer
+  #
+  # WARNING: Never commit real IBKR credentials to this file.
+  # Use Docker secrets or a secret manager.
+  ibkr-gateway-example:
+    image: ghcr.io/PLACEHOLDER/ib-gateway:latest  # replace with real image
+    container_name: ibkr-gateway-example
+    environment:
+      TRADING_MODE: paper  # paper or live
+      # Credentials must come from Docker secrets or environment injection
+      # IBKR_USERNAME and IBKR_PASSWORD should never be hardcoded here
+      # TWS_USERID_FILE: /run/secrets/ibkr_username
+      # TWS_PASSWORD_FILE: /run/secrets/ibkr_password
+    ports:
+      - "4002:4002"  # IB Gateway paper trading port
+    networks:
+      - investment_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4002"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  investment_network:
+    external: true  # must match the network in docker-compose.yml

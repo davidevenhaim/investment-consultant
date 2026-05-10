@@ -146,6 +146,7 @@ class PersonalizedRecommendationResponse(_OrmBase):
     current_position_weight: float | None
     max_allowed_weight: float | None
     portfolio_snapshot_id: uuid.UUID | None
+    symbol_trading_stats_json: dict[str, Any] = {}
     created_at: datetime
 
 
@@ -210,6 +211,70 @@ class PortfolioSummaryResponse(BaseModel):
     account: PortfolioAccountResponse
     snapshot: PortfolioSnapshotResponse | None
     positions: list[PortfolioPositionResponse]
+
+
+# ── Broker accounts ───────────────────────────────────────────────────────────
+
+_FORBIDDEN_BODY_KEYS = {"password", "username", "secret", "token", "api_key", "apikey"}
+
+
+class BrokerAccountCreate(BaseModel):
+    provider: Literal["IBKR"] = "IBKR"
+    display_name: str = Field(min_length=1, max_length=255)
+    connection_mode: Literal["LOCAL_TWS", "HOSTED_GATEWAY"] = "LOCAL_TWS"
+    host: str | None = None
+    port: int | None = Field(default=None, gt=0, lt=65536)
+    client_id: int = Field(default=1, gt=0)
+    readonly: Literal[True] = True  # must always be True
+    is_active: bool = True
+    external_account_id: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        for key in _FORBIDDEN_BODY_KEYS:
+            if key in self.metadata_json:
+                raise ValueError(
+                    f"metadata_json must not contain '{key}'. "
+                    "Store secret references (e.g. secret_ref) instead."
+                )
+
+
+class BrokerAccountUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    connection_mode: Literal["LOCAL_TWS", "HOSTED_GATEWAY"] | None = None
+    host: str | None = None
+    port: int | None = Field(default=None, gt=0, lt=65536)
+    client_id: int | None = Field(default=None, gt=0)
+    is_active: bool | None = None
+    metadata_json: dict[str, Any] | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.metadata_json:
+            for key in _FORBIDDEN_BODY_KEYS:
+                if key in self.metadata_json:
+                    raise ValueError(
+                        f"metadata_json must not contain '{key}'. "
+                        "Store secret references (e.g. secret_ref) instead."
+                    )
+
+
+class BrokerAccountResponse(_OrmBase):
+    id: uuid.UUID
+    user_id: uuid.UUID | None
+    provider: str
+    display_name: str
+    connection_mode: str
+    host: str | None
+    port: int | None
+    client_id: int
+    readonly: bool
+    is_active: bool
+    external_account_id: str | None
+    last_sync_at: datetime | None
+    last_sync_status: str | None
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
 
 
 # ── Trade history ─────────────────────────────────────────────────────────────

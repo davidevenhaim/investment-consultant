@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from db.enums import ResearchRunStatus, ResearchRunType, TickerRunStatus
 from db.models import (
     AuditLog,
+    BrokerAccount,
     IBKRExecution,
     InvestorProfile,
     JobEvent,
@@ -317,7 +318,11 @@ class RecommendationRepository:
     async def get_latest_per_symbol(
         self, symbols: list[str] | None = None
     ) -> list[NeutralRecommendation]:
-        """Return the most recent neutral recommendation for each symbol."""
+        """Return the most recent neutral recommendation for each symbol.
+
+        NOTE: may mix recs from different runs. Prefer get_from_latest_run()
+        when you want all recs from the single latest run.
+        """
         from sqlalchemy import func as sqlfunc
 
         subq = (
@@ -332,6 +337,31 @@ class RecommendationRepository:
             subq,
             (NeutralRecommendation.symbol == subq.c.symbol)
             & (NeutralRecommendation.as_of_time == subq.c.max_time),
+        )
+        if symbols:
+            q = q.where(NeutralRecommendation.symbol.in_([s.upper() for s in symbols]))
+        result = await self._s.execute(q)
+        return list(result.scalars().all())
+
+    async def get_from_latest_run(
+        self, symbols: list[str] | None = None
+    ) -> list[NeutralRecommendation]:
+        """Return all neutral recommendations from the single most recent research run.
+
+        Scopes results to one run, preventing symbol bleed across runs.
+        """
+        from sqlalchemy import func as sqlfunc
+
+        # Find the research_run_id whose recs have the most recent as_of_time
+        latest_run_id_subq = (
+            select(NeutralRecommendation.research_run_id)
+            .group_by(NeutralRecommendation.research_run_id)
+            .order_by(sqlfunc.max(NeutralRecommendation.as_of_time).desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        q = select(NeutralRecommendation).where(
+            NeutralRecommendation.research_run_id == latest_run_id_subq
         )
         if symbols:
             q = q.where(NeutralRecommendation.symbol.in_([s.upper() for s in symbols]))
@@ -700,14 +730,20 @@ class IBKRExecutionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def exists_by_exec_id(self, exec_id: str) -> bool:
-        result = await self._s.execute(
-            select(IBKRExecution.id).where(IBKRExecution.exec_id == exec_id)
-        )
+    async def exists_by_exec_id(
+        self, exec_id: str, broker_account_id: uuid.UUID | None = None
+    ) -> bool:
+        q = select(IBKRExecution.id).where(IBKRExecution.exec_id == exec_id)
+        if broker_account_id is not None:
+            q = q.where(IBKRExecution.broker_account_id == broker_account_id)
+        result = await self._s.execute(q)
         return result.scalar_one_or_none() is not None
 
-    async def create(self, ex: Any) -> IBKRExecution:
+    async def create(
+        self, ex: Any, broker_account_id: uuid.UUID | None = None
+    ) -> IBKRExecution:
         row = IBKRExecution(
+            broker_account_id=broker_account_id,
             account_id_ibkr=ex.account_id_ibkr,
             exec_id=ex.exec_id,
             symbol=ex.symbol,
@@ -730,20 +766,28 @@ class IBKRExecutionRepository:
         self,
         since: datetime,
         symbol: str | None = None,
+        broker_account_id: uuid.UUID | None = None,
     ) -> list[IBKRExecution]:
         q = select(IBKRExecution).where(IBKRExecution.executed_at >= since)
         if symbol:
             q = q.where(IBKRExecution.symbol == symbol)
+        if broker_account_id is not None:
+            q = q.where(IBKRExecution.broker_account_id == broker_account_id)
         q = q.order_by(IBKRExecution.executed_at)
         result = await self._s.execute(q)
         return list(result.scalars().all())
 
-    async def list_by_symbol(self, symbol: str) -> list[IBKRExecution]:
-        result = await self._s.execute(
+    async def list_by_symbol(
+        self, symbol: str, broker_account_id: uuid.UUID | None = None
+    ) -> list[IBKRExecution]:
+        q = (
             select(IBKRExecution)
             .where(IBKRExecution.symbol == symbol)
             .order_by(IBKRExecution.executed_at)
         )
+        if broker_account_id is not None:
+            q = q.where(IBKRExecution.broker_account_id == broker_account_id)
+        result = await self._s.execute(q)
         return list(result.scalars().all())
 
 
@@ -760,8 +804,10 @@ class ManualTradeRepository:
         executed_at: datetime,
         notes: str | None = None,
         source: str = "manual",
+        broker_account_id: uuid.UUID | None = None,
     ) -> ManualTrade:
         row = ManualTrade(
+            broker_account_id=broker_account_id,
             symbol=symbol,
             side=side,
             quantity=quantity,
@@ -779,20 +825,28 @@ class ManualTradeRepository:
         self,
         since: datetime,
         symbol: str | None = None,
+        broker_account_id: uuid.UUID | None = None,
     ) -> list[ManualTrade]:
         q = select(ManualTrade).where(ManualTrade.executed_at >= since)
         if symbol:
             q = q.where(ManualTrade.symbol == symbol)
+        if broker_account_id is not None:
+            q = q.where(ManualTrade.broker_account_id == broker_account_id)
         q = q.order_by(ManualTrade.executed_at)
         result = await self._s.execute(q)
         return list(result.scalars().all())
 
-    async def list_by_symbol(self, symbol: str) -> list[ManualTrade]:
-        result = await self._s.execute(
+    async def list_by_symbol(
+        self, symbol: str, broker_account_id: uuid.UUID | None = None
+    ) -> list[ManualTrade]:
+        q = (
             select(ManualTrade)
             .where(ManualTrade.symbol == symbol)
             .order_by(ManualTrade.executed_at)
         )
+        if broker_account_id is not None:
+            q = q.where(ManualTrade.broker_account_id == broker_account_id)
+        result = await self._s.execute(q)
         return list(result.scalars().all())
 
 
@@ -800,16 +854,28 @@ class TradingProfileSnapshotRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def latest(self, period_months: int | None = None) -> TradingProfileSnapshot | None:
+    async def latest(
+        self,
+        period_months: int | None = None,
+        broker_account_id: uuid.UUID | None = None,
+    ) -> TradingProfileSnapshot | None:
         q = select(TradingProfileSnapshot)
         if period_months is not None:
             q = q.where(TradingProfileSnapshot.period_months == period_months)
-        q = q.order_by(TradingProfileSnapshot.as_of_date.desc()).limit(1)
+        if broker_account_id is not None:
+            q = q.where(TradingProfileSnapshot.broker_account_id == broker_account_id)
+        q = q.order_by(
+            TradingProfileSnapshot.as_of_date.desc(),
+            TradingProfileSnapshot.created_at.desc(),
+        ).limit(1)
         result = await self._s.execute(q)
         return result.scalar_one_or_none()
 
-    async def create(self, profile: Any) -> TradingProfileSnapshot:
+    async def create(
+        self, profile: Any, broker_account_id: uuid.UUID | None = None
+    ) -> TradingProfileSnapshot:
         row = TradingProfileSnapshot(
+            broker_account_id=broker_account_id,
             period_months=profile.period_months,
             as_of_date=profile.as_of_date,
             total_executions=profile.total_executions,
@@ -830,3 +896,142 @@ class TradingProfileSnapshotRepository:
         await self._s.flush()
         await self._s.refresh(row)
         return row
+
+
+class BrokerAccountRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get_by_id(self, account_id: uuid.UUID) -> BrokerAccount | None:
+        result = await self._s.execute(
+            select(BrokerAccount).where(BrokerAccount.id == account_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_active(
+        self, user_id: uuid.UUID | None = None
+    ) -> list[BrokerAccount]:
+        q = select(BrokerAccount).where(BrokerAccount.is_active.is_(True))
+        if user_id is not None:
+            q = q.where(BrokerAccount.user_id == user_id)
+        result = await self._s.execute(q)
+        return list(result.scalars().all())
+
+    async def get_active_default(
+        self, user_id: uuid.UUID | None = None
+    ) -> BrokerAccount | None:
+        """Return first active account for this user (or global if user_id None)."""
+        q = (
+            select(BrokerAccount)
+            .where(BrokerAccount.is_active.is_(True))
+            .order_by(BrokerAccount.created_at)
+            .limit(1)
+        )
+        if user_id is not None:
+            q = q.where(BrokerAccount.user_id == user_id)
+        result = await self._s.execute(q)
+        return result.scalar_one_or_none()
+
+    async def ensure_dev_default(self) -> BrokerAccount:
+        """Return the default dev account, creating it if absent."""
+        from core.config import get_settings
+
+        existing = await self.get_active_default()
+        if existing is not None:
+            return existing
+
+        cfg = get_settings()
+        account = BrokerAccount(
+            provider="IBKR",
+            display_name="Dev Default (LOCAL_TWS)",
+            connection_mode="LOCAL_TWS",
+            host=cfg.ibkr_host,
+            port=cfg.ibkr_port,
+            client_id=cfg.ibkr_client_id,
+            readonly=cfg.ibkr_readonly,
+            is_active=True,
+            metadata_json={"auto_created": True, "source": "ensure_dev_default"},
+        )
+        self._s.add(account)
+        await self._s.flush()
+        await self._s.refresh(account)
+        return account
+
+    async def create(
+        self,
+        provider: str,
+        display_name: str,
+        connection_mode: str,
+        host: str | None,
+        port: int | None,
+        client_id: int,
+        readonly: bool,
+        is_active: bool = True,
+        user_id: uuid.UUID | None = None,
+        external_account_id: str | None = None,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> BrokerAccount:
+        account = BrokerAccount(
+            user_id=user_id,
+            provider=provider,
+            display_name=display_name,
+            connection_mode=connection_mode,
+            host=host,
+            port=port,
+            client_id=client_id,
+            readonly=readonly,
+            is_active=is_active,
+            external_account_id=external_account_id,
+            metadata_json=metadata_json or {},
+        )
+        self._s.add(account)
+        await self._s.flush()
+        await self._s.refresh(account)
+        return account
+
+    async def update(
+        self,
+        account_id: uuid.UUID,
+        **fields: Any,
+    ) -> BrokerAccount | None:
+        allowed = {
+            "display_name", "connection_mode", "host", "port",
+            "client_id", "is_active", "metadata_json",
+        }
+        filtered = {k: v for k, v in fields.items() if k in allowed}
+        if not filtered:
+            return await self.get_by_id(account_id)
+        filtered["updated_at"] = datetime.now(UTC)
+        await self._s.execute(
+            update(BrokerAccount)
+            .where(BrokerAccount.id == account_id)
+            .values(**filtered)
+        )
+        await self._s.flush()
+        return await self.get_by_id(account_id)
+
+    async def mark_sync_success(self, account_id: uuid.UUID) -> None:
+        await self._s.execute(
+            update(BrokerAccount)
+            .where(BrokerAccount.id == account_id)
+            .values(
+                last_sync_at=datetime.now(UTC),
+                last_sync_status="success",
+                last_sync_error=None,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self._s.flush()
+
+    async def mark_sync_failure(self, account_id: uuid.UUID, error: str) -> None:
+        await self._s.execute(
+            update(BrokerAccount)
+            .where(BrokerAccount.id == account_id)
+            .values(
+                last_sync_at=datetime.now(UTC),
+                last_sync_status="failure",
+                last_sync_error=error[:2000],
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self._s.flush()

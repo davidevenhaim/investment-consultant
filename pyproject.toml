@@ -38,6 +38,8 @@ dependencies = [
     "pandas-ta>=0.3.14b0",
     # News (used from M8+)
     "newsapi-python>=0.2.7",
+    # Interactive Brokers Sync
+    "ib-insync>=0.9.86",
 ]
 
 [project.optional-dependencies]

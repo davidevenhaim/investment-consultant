@@ -1,16 +1,22 @@
-"""Portfolio router — GET/POST/DELETE /api/v1/portfolio + M9.5 trade history endpoints."""
+"""Portfolio router — M9 portfolio + M9.5 trade history + M9.6 broker accounts."""
 
+import uuid
 from typing import Any
 
 from core.config import get_settings
+from core.errors import IBKRConnectionError
 from core.responses import api_response
 from db.repositories import (
+    BrokerAccountRepository,
     ManualTradeRepository,
     PortfolioPositionRepository,
     PortfolioSnapshotRepository,
     TradingProfileSnapshotRepository,
 )
 from db.schemas import (
+    BrokerAccountCreate,
+    BrokerAccountResponse,
+    BrokerAccountUpdate,
     IBKRSyncResponse,
     ManualTradeCreate,
     ManualTradeResponse,
@@ -33,6 +39,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+async def _active_broker_account_id(db: AsyncSession) -> uuid.UUID | None:
+    """Return the active default broker account ID, or None if none exists."""
+    ba_repo = BrokerAccountRepository(db)
+    account = await ba_repo.get_active_default()
+    return account.id if account is not None else None
+
+
 async def _get_summary(db: AsyncSession, request: Request) -> dict[str, Any]:
     account = await ensure_default_portfolio(db)
     pos_repo = PortfolioPositionRepository(db)
@@ -48,12 +64,71 @@ async def _get_summary(db: AsyncSession, request: Request) -> dict[str, Any]:
     return api_response(summary.model_dump(), request)
 
 
+async def _run_ibkr_sync(
+    db: AsyncSession,
+    request: Request,
+    broker_account_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Shared sync logic for /sync-ibkr and /broker-accounts/{id}/sync-ibkr.
+
+    IBKR fetch runs in an isolated thread with its own event loop via
+    asyncio.to_thread + fetch_executions_isolated. This avoids the
+    "Future attached to a different loop" error that occurs when ib_insync
+    runs inside the Uvicorn/FastAPI event loop.
+
+    The DB writes stay in the normal async session after the isolated fetch returns.
+    """
+    import asyncio
+
+    from broker.ibkr.client import IBKRClient
+    from broker.ibkr.sync_runner import fetch_executions_isolated
+    from portfolio.trade_history_service import sync_ibkr_executions
+
+    cfg = get_settings()
+    ba_repo = BrokerAccountRepository(db)
+
+    if broker_account_id is not None:
+        broker_account = await ba_repo.get_by_id(broker_account_id)
+        if broker_account is None:
+            raise HTTPException(status_code=404, detail="Broker account not found.")
+        client = IBKRClient.from_broker_account(broker_account)
+    else:
+        broker_account = await ba_repo.ensure_dev_default()
+        await db.commit()
+        client = IBKRClient.from_settings()
+
+    ba_id = broker_account.id
+    ibkr_config = client.config  # IBKRConnectionConfig — safe to pass into thread
+
+    try:
+        # Run the IBKR fetch in a worker thread with its own event loop.
+        # asyncio.run() inside the thread creates a fresh loop; ib_insync
+        # futures never touch the Uvicorn loop.
+        executions = await asyncio.to_thread(
+            fetch_executions_isolated,
+            ibkr_config,
+            cfg.ibkr_trade_history_months,
+        )
+        inserted = await sync_ibkr_executions(db, executions, broker_account_id=ba_id)
+        await db.commit()
+    except IBKRConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    result = IBKRSyncResponse(
+        inserted=inserted,
+        message=f"Synced {len(executions)} executions from IBKR; {inserted} new.",
+    )
+    return api_response(result.model_dump(), request)
+
+
+# ── Portfolio CRUD ────────────────────────────────────────────────────────────
+
+
 @router.get("")
 async def get_portfolio(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    # ensure_default_portfolio may CREATE the account — commit so it survives
     await ensure_default_portfolio(db)
     await db.commit()
     return await _get_summary(db, request)
@@ -75,7 +150,7 @@ async def upsert_position(
     )
     await refresh_portfolio_prices(db, account.id)
     await build_portfolio_snapshot(db, account.id)
-    await db.commit()  # persist so the next research run's fresh session sees the data
+    await db.commit()
     return await _get_summary(db, request)
 
 
@@ -107,7 +182,7 @@ async def refresh_portfolio(
     return await _get_summary(db, request)
 
 
-# ── M9.5: IBKR sync ──────────────────────────────────────────────────────────
+# ── M9.5: IBKR sync (global dev path) ────────────────────────────────────────
 
 
 @router.post("/sync-ibkr")
@@ -115,29 +190,17 @@ async def sync_ibkr(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Fetch IBKR executions and persist new ones. IBKR_ENABLED must be true."""
+    """Sync IBKR executions via the default dev broker account.
+
+    Requires IBKR_ENABLED=true and TWS/IB Gateway running on host.
+    """
     cfg = get_settings()
     if not cfg.ibkr_enabled:
         raise HTTPException(
             status_code=503,
             detail="IBKR integration is disabled. Set IBKR_ENABLED=true to enable.",
         )
-
-    from broker.ibkr.client import IBKRClient
-    from broker.ibkr.trade_history import fetch_executions
-    from portfolio.trade_history_service import sync_ibkr_executions
-
-    async with IBKRClient().connected() as client:
-        executions = await fetch_executions(client, months=cfg.ibkr_trade_history_months)
-
-    inserted = await sync_ibkr_executions(db, executions)
-    await db.commit()
-
-    result = IBKRSyncResponse(
-        inserted=inserted,
-        message=f"Synced {len(executions)} executions from IBKR; {inserted} new.",
-    )
-    return api_response(result.model_dump(), request)
+    return await _run_ibkr_sync(db, request)
 
 
 # ── M9.5: Trading profile ─────────────────────────────────────────────────────
@@ -148,11 +211,15 @@ async def get_trading_profile(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Return the most recent trading profile snapshot."""
     repo = TradingProfileSnapshotRepository(db)
-    snapshot = await repo.latest()
+    ba_id = await _active_broker_account_id(db)
+    snapshot = None
+    if ba_id is not None:
+        snapshot = await repo.latest(broker_account_id=ba_id)
     if snapshot is None:
-        raise HTTPException(status_code=404, detail="No trading profile found. Run a sync first.")
+        snapshot = await repo.latest()
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="No trading profile found.")
     return api_response(TradingProfileResponse.model_validate(snapshot).model_dump(), request)
 
 
@@ -161,10 +228,10 @@ async def rebuild_trading_profile(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Recompute and persist a fresh trading profile from current trade history."""
     from portfolio.trade_history_service import build_and_save_profile
 
-    snapshot = await build_and_save_profile(db)
+    ba_id = await _active_broker_account_id(db)
+    snapshot = await build_and_save_profile(db, broker_account_id=ba_id)
     await db.commit()
     return api_response(TradingProfileResponse.model_validate(snapshot).model_dump(), request)
 
@@ -175,10 +242,10 @@ async def get_symbol_trading_stats(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Return per-symbol trading stats for one ticker."""
-    from portfolio.trade_history_service import get_symbol_trading_stats
+    from portfolio.trade_history_service import get_symbol_trading_stats as _get_stats
 
-    stats = await get_symbol_trading_stats(db, symbol.upper())
+    ba_id = await _active_broker_account_id(db)
+    stats = await _get_stats(db, symbol.upper(), broker_account_id=ba_id)
     if not stats:
         raise HTTPException(
             status_code=404,
@@ -197,10 +264,12 @@ async def list_trades(
     months: int = Query(default=12, ge=1, le=120),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """List combined IBKR + manual trades for the given window."""
     from portfolio.trade_history_service import load_all_executions
 
-    executions = await load_all_executions(db, months=months, symbol=symbol)
+    ba_id = await _active_broker_account_id(db)
+    executions = await load_all_executions(
+        db, months=months, symbol=symbol, broker_account_id=ba_id
+    )
     rows = [ex.model_dump() for ex in executions]
     return api_response({"trades": rows, "count": len(rows)}, request)
 
@@ -211,7 +280,6 @@ async def add_manual_trade(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Record a manual (non-IBKR) trade entry."""
     repo = ManualTradeRepository(db)
     row = await repo.create(
         symbol=body.symbol.upper(),
@@ -224,3 +292,224 @@ async def add_manual_trade(
     )
     await db.commit()
     return api_response(ManualTradeResponse.model_validate(row).model_dump(), request)
+
+
+# ── M9.6: Broker accounts ─────────────────────────────────────────────────────
+
+
+@router.get("/broker-accounts")
+async def list_broker_accounts(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    repo = BrokerAccountRepository(db)
+    accounts = await repo.list_active()
+    return api_response(
+        [BrokerAccountResponse.model_validate(a).model_dump() for a in accounts],
+        request,
+    )
+
+
+@router.post("/broker-accounts")
+async def create_broker_account(
+    body: BrokerAccountCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    repo = BrokerAccountRepository(db)
+    account = await repo.create(
+        provider=body.provider,
+        display_name=body.display_name,
+        connection_mode=body.connection_mode,
+        host=body.host,
+        port=body.port,
+        client_id=body.client_id,
+        readonly=body.readonly,
+        is_active=body.is_active,
+        external_account_id=body.external_account_id,
+        metadata_json=body.metadata_json,
+    )
+    await db.commit()
+    return api_response(BrokerAccountResponse.model_validate(account).model_dump(), request)
+
+
+@router.get("/broker-accounts/{broker_account_id}")
+async def get_broker_account(
+    broker_account_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    repo = BrokerAccountRepository(db)
+    account = await repo.get_by_id(broker_account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found.")
+    return api_response(BrokerAccountResponse.model_validate(account).model_dump(), request)
+
+
+@router.patch("/broker-accounts/{broker_account_id}")
+async def update_broker_account(
+    broker_account_id: uuid.UUID,
+    body: BrokerAccountUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    repo = BrokerAccountRepository(db)
+    existing = await repo.get_by_id(broker_account_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Broker account not found.")
+
+    updates = body.model_dump(exclude_none=True)
+    account = await repo.update(broker_account_id, **updates)
+    await db.commit()
+    return api_response(
+        BrokerAccountResponse.model_validate(account).model_dump(), request
+    )
+
+
+@router.post("/broker-accounts/{broker_account_id}/sync-ibkr")
+async def sync_ibkr_for_account(
+    broker_account_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Sync IBKR executions for a specific broker account."""
+    cfg = get_settings()
+    if not cfg.ibkr_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="IBKR integration is disabled. Set IBKR_ENABLED=true to enable.",
+        )
+    return await _run_ibkr_sync(db, request, broker_account_id=broker_account_id)
+
+
+# ── M9.7: Flex Query sync ─────────────────────────────────────────────────────
+
+
+def _get_flex_credentials(cfg: Any, broker_account: Any) -> tuple[str, str]:
+    """Load Flex token and query_id.
+
+    Priority:
+      1. metadata_json["flex_token_env"] / ["flex_query_id_env"] → resolve env var name
+      2. Global settings (IBKR_FLEX_TOKEN / IBKR_FLEX_QUERY_ID)
+
+    Never accept raw token in request body.
+    """
+    import os  # noqa: PLC0415
+
+    token = ""
+    query_id = ""
+
+    if broker_account is not None:
+        meta = broker_account.metadata_json or {}
+        token_env = meta.get("flex_token_env")
+        query_env = meta.get("flex_query_id_env")
+        if token_env:
+            token = os.environ.get(str(token_env), "")
+        if query_env:
+            query_id = os.environ.get(str(query_env), "")
+
+    # Fall back to global settings
+    if not token:
+        token = cfg.ibkr_flex_token
+    if not query_id:
+        query_id = cfg.ibkr_flex_query_id
+
+    return token, query_id
+
+
+@router.post("/sync-flex")
+async def sync_flex_global(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Sync historical IBKR executions via Flex Query for the default dev account.
+
+    Requires IBKR_FLEX_ENABLED=true and valid IBKR_FLEX_TOKEN / IBKR_FLEX_QUERY_ID.
+    """
+    cfg = get_settings()
+    if not cfg.ibkr_flex_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "IBKR Flex Query is disabled. "
+                "Set IBKR_FLEX_ENABLED=true and configure token/query_id."
+            ),
+        )
+
+    from db.repositories import BrokerAccountRepository  # noqa: PLC0415
+
+    ba_repo = BrokerAccountRepository(db)
+    broker_account = await ba_repo.ensure_dev_default()
+    await db.commit()
+
+    token, query_id = _get_flex_credentials(cfg, broker_account)
+    if not token or not query_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Flex token or query_id missing. "
+                "Set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in environment."
+            ),
+        )
+
+    from core.errors import IBKRFlexError  # noqa: PLC0415
+    from portfolio.trade_history_service import sync_ibkr_flex_executions  # noqa: PLC0415
+
+    try:
+        result = await sync_ibkr_flex_executions(
+            db, broker_account.id, token, query_id
+        )
+        await db.commit()
+    except IBKRFlexError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return api_response(result, request)
+
+
+@router.post("/broker-accounts/{broker_account_id}/sync-flex")
+async def sync_flex_for_account(
+    broker_account_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Sync historical IBKR executions via Flex Query for a specific broker account."""
+    cfg = get_settings()
+    if not cfg.ibkr_flex_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "IBKR Flex Query is disabled. "
+                "Set IBKR_FLEX_ENABLED=true and configure token/query_id."
+            ),
+        )
+
+    from db.repositories import BrokerAccountRepository  # noqa: PLC0415
+
+    ba_repo = BrokerAccountRepository(db)
+    broker_account = await ba_repo.get_by_id(broker_account_id)
+    if broker_account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found.")
+
+    token, query_id = _get_flex_credentials(cfg, broker_account)
+    if not token or not query_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Flex token or query_id missing for this broker account. "
+                "Set flex_token_env / flex_query_id_env in metadata_json, "
+                "or set IBKR_FLEX_TOKEN / IBKR_FLEX_QUERY_ID globally."
+            ),
+        )
+
+    from core.errors import IBKRFlexError  # noqa: PLC0415
+    from portfolio.trade_history_service import sync_ibkr_flex_executions  # noqa: PLC0415
+
+    try:
+        result = await sync_ibkr_flex_executions(
+            db, broker_account_id, token, query_id
+        )
+        await db.commit()
+    except IBKRFlexError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return api_response(result, request)

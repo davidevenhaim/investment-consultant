@@ -33,6 +33,7 @@ __all__ = [
     "MarketPrice",
     "CompanyFundamentals",
     "NewsItem",
+    "BrokerAccount",
     "PortfolioAccount",
     "PortfolioPosition",
     "PortfolioSnapshot",
@@ -224,6 +225,43 @@ class PortfolioSnapshot(Base, UUIDMixin):
     account: Mapped["PortfolioAccount"] = relationship("PortfolioAccount")
 
 
+class BrokerAccount(Base, UUIDMixin, TimestampMixin):
+    """One broker connection config per user/account.
+
+    Supports LOCAL_TWS (host TWS/IB Gateway) and HOSTED_GATEWAY (container per user).
+    Secrets are never stored here — only references to secret manager entries.
+    """
+
+    __tablename__ = "broker_accounts"
+    __table_args__ = (
+        Index("ix_broker_accounts_user_id", "user_id"),
+        Index("ix_broker_accounts_provider", "provider"),
+        Index("ix_broker_accounts_active", "is_active"),
+    )
+
+    # nullable until auth (M10+) enforces non-null
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="IBKR")
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_account_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    connection_mode: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="LOCAL_TWS"
+    )
+    host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    client_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    readonly: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(
+        PGTIMESTAMP(timezone=True), nullable=True
+    )
+    last_sync_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    last_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+
 class IBKRExecution(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "ibkr_executions"
     __table_args__ = (
@@ -233,8 +271,14 @@ class IBKRExecution(Base, UUIDMixin, TimestampMixin):
         Index("ix_ibkr_executions_symbol_date", "symbol", "executed_at"),
         Index("ix_ibkr_executions_account", "account_id_ibkr"),
         Index("ix_ibkr_executions_side", "side"),
+        Index("ix_ibkr_executions_broker_account_id", "broker_account_id"),
     )
 
+    broker_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("broker_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     account_id_ibkr: Mapped[str] = mapped_column(String(50), nullable=False)
     exec_id: Mapped[str] = mapped_column(String(255), nullable=False)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -250,6 +294,8 @@ class IBKRExecution(Base, UUIDMixin, TimestampMixin):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
+    broker_account: Mapped["BrokerAccount | None"] = relationship("BrokerAccount")
+
 
 class ManualTrade(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "manual_trades"
@@ -257,8 +303,14 @@ class ManualTrade(Base, UUIDMixin, TimestampMixin):
         Index("ix_manual_trades_symbol", "symbol"),
         Index("ix_manual_trades_executed_at", "executed_at"),
         Index("ix_manual_trades_symbol_date", "symbol", "executed_at"),
+        Index("ix_manual_trades_broker_account_id", "broker_account_id"),
     )
 
+    broker_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("broker_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     side: Mapped[str] = mapped_column(String(10), nullable=False)
     quantity: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
@@ -273,6 +325,13 @@ class TradingProfileSnapshot(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         Index("ix_trading_profile_as_of_date", "as_of_date"),
         Index("ix_trading_profile_period", "period_months"),
+        Index("ix_trading_profile_broker_account_id", "broker_account_id"),
+    )
+
+    broker_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("broker_accounts.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     period_months: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
@@ -532,6 +591,9 @@ class PersonalizedRecommendation(Base, UUIDMixin, TimestampMixin):
     current_position_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_allowed_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
     personal_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    symbol_trading_stats_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     neutral: Mapped["NeutralRecommendation"] = relationship("NeutralRecommendation")
     investor_profile: Mapped["InvestorProfile | None"] = relationship("InvestorProfile")

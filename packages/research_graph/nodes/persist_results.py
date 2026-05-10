@@ -86,6 +86,7 @@ def make_persist_results(
                 if personalized.portfolio_snapshot_id:
                     with contextlib.suppress(ValueError):
                         snap_id = uuid.UUID(personalized.portfolio_snapshot_id)
+                symbol_trading_stats = state.get("symbol_trading_stats") or {}
                 pr = PersonalizedRecModel(
                     neutral_recommendation_id=neutral_rec_id,
                     symbol=symbol,
@@ -96,6 +97,7 @@ def make_persist_results(
                     max_allowed_weight=personalized.max_allowed_weight,
                     personal_reason=personalized.personal_reason,
                     portfolio_snapshot_id=snap_id,
+                    symbol_trading_stats_json=symbol_trading_stats,
                 )
                 session.add(pr)
                 await session.flush()

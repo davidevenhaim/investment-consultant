@@ -179,6 +179,9 @@ class ResearchState(TypedDict):
     suggested_trade_json: dict[str, Any] | None
     personalized_rec: PersonalizedRecState | None
 
+    # ── broker account (M9.6+) ───────────────────────────────────────────────
+    broker_account_id: str | None               # UUID str of BrokerAccount used for this run
+
     # ── trading history (M9.5+) ──────────────────────────────────────────────
     symbol_trading_stats: dict[str, Any] | None  # per-symbol stats from trading profile
     trading_profile: dict[str, Any] | None       # full aggregate trading profile

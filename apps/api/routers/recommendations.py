@@ -19,33 +19,17 @@ async def latest_recommendations(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    wl_repo = WatchlistRepository(db)
     rec_repo = RecommendationRepository(db)
+    wl_repo = WatchlistRepository(db)
 
-    symbols = [s.symbol for s in await wl_repo.list_active()]
-    recs = await rec_repo.get_latest_per_symbol(symbols if symbols else None)
-    rec_by_symbol = {r.symbol: r for r in recs}
+    # All recs from the single latest research run — prevents symbol bleed across runs
+    recs = await rec_repo.get_from_latest_run()
 
-    # Load personalized recs for each neutral rec
-    neutral_ids = [r.id for r in recs]
-    personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(neutral_ids)
-
-    result = []
-    for symbol in symbols:
-        neutral = rec_by_symbol.get(symbol)
-        pers = personalized_by_neutral.get(neutral.id) if neutral else None
-        result.append(
-            LatestRecommendationResponse(
-                symbol=symbol,
-                neutral=NeutralRecommendationResponse.model_validate(neutral) if neutral else None,
-                personalized=(
-                    PersonalizedRecommendationResponse.model_validate(pers) if pers else None
-                ),
-            ).model_dump()
+    if recs:
+        neutral_ids = [r.id for r in recs]
+        personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(
+            neutral_ids
         )
-
-    # If no watchlist, return whatever recs exist
-    if not symbols and recs:
         result = []
         for r in recs:
             pers = personalized_by_neutral.get(r.id)
@@ -58,5 +42,12 @@ async def latest_recommendations(
                     ),
                 ).model_dump()
             )
+    else:
+        # No completed runs yet — return watchlist symbols with null recs
+        symbols = [s.symbol for s in await wl_repo.list_active()]
+        result = [
+            LatestRecommendationResponse(symbol=s, neutral=None, personalized=None).model_dump()
+            for s in symbols
+        ]
 
     return api_response(result, request)

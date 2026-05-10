@@ -631,9 +631,9 @@ make run         # trigger a manual research run via CLI
 
 ---
 
-## What to build first
+## What to build next
 
-**Start with Milestone 1.**
+**Currently on Milestone 9.7.**
 
 When asked to build a milestone, always:
 1. Read this file first
@@ -641,6 +641,190 @@ When asked to build a milestone, always:
 3. Build only what the milestone specifies — do not jump ahead
 4. Ensure `make up && make migrate && make test && make lint` pass before declaring done
 5. Ask before making any architectural decision not covered here
+
+---
+
+## Current project state
+
+> Last verified: M9.6 complete. Next: M9.7 — IBKR Flex Query historical trade import.
+
+### Quality gate (verified before M9.7)
+- `make test` — passing
+- `make test-integration` — passing
+- `make lint` — ruff clean, mypy clean
+- Docker services healthy: api, worker, beat, postgres, redis, chroma
+
+### Completed milestones
+
+**M1 — Production skeleton**
+FastAPI, Docker Compose, Postgres, Redis, Celery, Chroma, Alembic, health endpoints, structured JSON logging, tests/lint/mypy.
+
+**M2 — Core research database**
+Tables: research_runs, research_run_tickers, watchlist_symbols, investor_profiles, strategy_versions, prompt_versions, recommendations, evidence, job events, audit logs.
+
+**M3 — LangGraph v0**
+Research graph runs ticker research and persists recommendations end-to-end.
+
+**M4–M7 — Market / fundamentals / LLM / memory**
+- Market data ingestion + technical signals (yfinance, pandas-ta)
+- Fundamentals snapshots + scoring
+- Optional LLM analysis with strict Pydantic schemas; no direct action upgrades from LLM
+- ChromaDB memory for previous recommendations and manual notes
+
+**M8 — News**
+- `packages/news` with fake provider + NewsAPI provider
+- `news_items` table
+- `fetch_news` graph node
+- News score in neutral recommendation
+- `NEWS_ANALYSIS` and `NEWS_ITEM` evidence rows
+- `GET /api/v1/news/{symbol}/latest`
+- `NEWS_ENABLED=false` is valid; missing news never crashes a run
+
+**M9 — Portfolio**
+- Tables: `portfolio_accounts`, `portfolio_positions`, `portfolio_snapshots`
+- Portfolio fit score replaces old stub
+- Personalized recommendation uses real portfolio context
+- `position_sizing_json` added to personalized recs
+- `GET/POST /api/v1/portfolio` endpoints
+- Bug fixed: portfolio mutations now commit; research sessions see positions
+- `load_portfolio_context` sets `current_position_weight > 0` when position exists
+- `score_breakdown_json` moves `portfolio_context` from missing → completed; sets `component_quality_scores.portfolio_context = 1.0`; recomputes completeness
+
+**M9.5 — Trade history + trading profile**
+
+New tables: `ibkr_executions`, `manual_trades`, `trading_profile_snapshots`
+
+New packages:
+- `packages/broker/ibkr/schemas.py`
+- `packages/broker/ibkr/client.py`
+- `packages/broker/ibkr/fake_client.py`
+- `packages/broker/ibkr/mapper.py`
+- `packages/broker/ibkr/trade_history.py`
+- `packages/broker/ibkr/sync_runner.py`
+
+`packages/portfolio/trading_profile.py` computes:
+- FIFO matching, win rate, profit factor
+- Avg winner/loser %, avg holding days
+- Concentration score, disposition effect score, recency bias score
+- Behavioral flags
+
+`packages/portfolio/trade_history_service.py`:
+- Sync IBKR executions into DB
+- Merge IBKR + manual trades
+- Build + save trading profile snapshots
+- Get per-symbol stats
+
+APIs added:
+```
+POST /api/v1/portfolio/trades
+GET  /api/v1/portfolio/trades
+GET  /api/v1/portfolio/trading-profile
+POST /api/v1/portfolio/trading-profile/rebuild
+GET  /api/v1/portfolio/trading-profile/{symbol}
+POST /api/v1/portfolio/sync-ibkr
+```
+
+Research graph loads `symbol_trading_stats` and `behavioral_flags` into state. LLM prompt receives bounded trading profile context when available.
+
+**M9.6 — Broker account support + IBKR connection fix**
+
+New table: `broker_accounts`
+
+Nullable `broker_account_id` FK added to: `ibkr_executions`, `manual_trades`, `trading_profile_snapshots`
+
+`IBKRClient` now uses `IBKRConnectionConfig`. Supports `connection_mode`:
+- `LOCAL_TWS`
+- `HOSTED_GATEWAY`
+
+`readonly=False` is rejected at config level.
+Secrets not stored in DB; only `secret_ref` metadata allowed.
+Hosted gateway architecture documented in `docs/ibkr-hosted-gateway.md` and `docker-compose.ibkr-gateway.example.yml`.
+
+APIs added:
+```
+GET   /api/v1/portfolio/broker-accounts
+POST  /api/v1/portfolio/broker-accounts
+GET   /api/v1/portfolio/broker-accounts/{id}
+PATCH /api/v1/portfolio/broker-accounts/{id}
+POST  /api/v1/portfolio/broker-accounts/{id}/sync-ibkr
+POST  /api/v1/portfolio/sync-ibkr   ← dev default still works
+```
+
+**Critical IBKR event loop fix (M9.6):**
+Old bug: `ib_insync` raised "Future attached to a different loop" inside FastAPI/Uvicorn.
+Fix: `packages/broker/ibkr/sync_runner.py` runs the full connect → fetch → disconnect sequence inside `asyncio.to_thread` + `asyncio.run()`, giving `ib_insync` its own isolated event loop. This is working.
+
+Verified real IBKR sync result:
+```json
+{ "inserted": 0, "message": "Synced 0 executions from IBKR; 0 new." }
+```
+Logs confirmed: `ibkr_connect_attempt` → `ibkr_connected` → `ibkr_executions_fetched` → `ibkr_disconnected` → `ibkr_executions_synced`. `broker_accounts.last_sync_status` = `"success"`.
+
+**Important discovery:** `reqExecutions` / `reqExecutionsAsync` only returns executions from the current TWS/Gateway session — not 12-month historical fills. Zero executions = no current-session fills, not a connection failure. For real historical trade history, use IBKR Flex Query (M9.7).
+
+---
+
+### M9.7 — IBKR Flex Query historical trade import
+
+**Goal:** Implement Flex Query as a separate read-only source for 12-month historical trades. Keep existing `reqExecutions` current-session sync intact.
+
+**New files (expected):**
+```
+packages/broker/ibkr/flex_schemas.py
+packages/broker/ibkr/flex_client.py
+packages/broker/ibkr/flex_parser.py       ← XML/CSV parsing
+packages/broker/ibkr/flex_mapper.py       ← Flex trade → IBKRExecution
+packages/broker/ibkr/fake_flex_client.py
+```
+
+**Config design:**
+- `flex_query_id` stored in `broker_accounts.metadata_json`
+- `flex_token_secret_ref` stored as reference only — never raw token in DB
+- Dev: env var `IBKR_FLEX_TOKEN` acceptable if clearly marked local/dev
+
+**APIs to add:**
+```
+POST /api/v1/portfolio/broker-accounts/{id}/sync-flex
+POST /api/v1/portfolio/sync-flex   ← dev default
+```
+
+Endpoint flow:
+1. Resolve broker account
+2. Fetch Flex statement/trades via Flex Query API
+3. Normalize to `IBKRExecution` schema via mapper
+4. Save via `sync_ibkr_executions(..., broker_account_id=...)`
+5. Rebuild trading profile for that `broker_account_id`
+6. Commit
+7. Return `{ inserted, fetched, profile_snapshot_id }`
+
+**Services to reuse (do not rewrite):**
+- `portfolio.trade_history_service.sync_ibkr_executions()`
+- `portfolio.trade_history_service.load_all_executions()`
+- `portfolio.trade_history_service.build_and_save_profile()`
+- `portfolio.trade_history_service.get_symbol_trading_stats()`
+- `broker.ibkr.schemas.IBKRExecution`
+
+**Tests required:**
+- Flex XML parsing
+- Mapper: Flex trade → `IBKRExecution`
+- Duplicate `exec_id` idempotency
+- `broker_account_id` scoping
+- API disabled/missing config
+- API happy path with fake Flex client
+- No raw token leakage in response/logs/schema
+- `make test` / `make test-integration` / `make lint` must pass
+
+**Safety constraints for M9.7:**
+- Read-only only — never submit orders
+- No raw credentials in DB fields
+- `IBKR_ENABLED=false` must not break anything
+- Flex failure must not crash research runs — degrade gracefully
+- Normalize Flex data through internal schemas before touching portfolio/research graph
+- LLM never makes trade decisions; scoring engine is judge
+- Do not break existing `sync_runner.py` or M9.5/M9.6 APIs
+
+**Handoff format at M9.7 completion:**
+Provide: files added/modified, migration if any, how Flex Query works, required config fields, how normalized executions are stored, APIs added, tests added, manual verification commands, known limitations/TODOs.
 
 ---
 

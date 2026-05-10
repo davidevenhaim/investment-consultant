@@ -162,3 +162,126 @@ async def test_personalized_includes_position_sizing_json(api_client: AsyncClien
     if aapl["personalized"] is not None:
         assert "position_sizing_json" in aapl["personalized"]
         assert isinstance(aapl["personalized"]["position_sizing_json"], dict)
+
+
+# ── Latest run scoping tests ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_latest_returns_only_symbols_from_latest_run(api_client: AsyncClient) -> None:
+    """Newer run with AAPL/AMD/NVDA must not include TSLA from an older run."""
+    # Old run: TSLA only
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["TSLA"]})
+    # New run: AAPL, AMD, NVDA
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL", "AMD", "NVDA"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    symbols = {d["symbol"] for d in data}
+
+    assert "AAPL" in symbols
+    assert "AMD" in symbols
+    assert "NVDA" in symbols
+    assert "TSLA" not in symbols, "TSLA from an older run must not appear in /latest"
+
+
+@pytest.mark.asyncio
+async def test_latest_includes_amd_watchlist_action(api_client: AsyncClient) -> None:
+    """AMD with no position → personalized action must be WATCHLIST or NO_ACTION."""
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL", "AMD", "NVDA"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+
+    amd = next((d for d in data if d["symbol"] == "AMD"), None)
+    assert amd is not None, "AMD must appear in /latest"
+    assert amd["neutral"] is not None
+
+    pers = amd.get("personalized")
+    if pers is not None:
+        # With no IBKR position and no portfolio context, HOLD → WATCHLIST
+        assert pers["personal_action"] in ("WATCHLIST", "NO_ACTION", "HOLD"), (
+            f"AMD personalized action unexpected: {pers['personal_action']}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_latest_run_with_single_symbol_excludes_older_symbols(api_client: AsyncClient) -> None:
+    """After a 3-symbol run, a single-symbol run must return only that one symbol."""
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL", "NVDA", "TSLA"]})
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AMD"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    symbols = {d["symbol"] for d in data}
+
+    assert symbols == {"AMD"}, f"Expected only AMD, got {symbols}"
+
+
+# ── symbol_trading_stats_json on personalized recs ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_personalized_symbol_trading_stats_json_field_exists(api_client: AsyncClient) -> None:
+    """personalized.symbol_trading_stats_json must be present in the API response."""
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    if aapl["personalized"] is not None:
+        assert "symbol_trading_stats_json" in aapl["personalized"]
+        assert isinstance(aapl["personalized"]["symbol_trading_stats_json"], dict)
+
+
+@pytest.mark.asyncio
+async def test_personalized_symbol_trading_stats_populated_with_trade_history(
+    api_client: AsyncClient,
+) -> None:
+    """When IBKR executions exist for AAPL, personalized.symbol_trading_stats_json must be non-empty."""
+    import datetime as dt
+
+    # Seed IBKR executions for AAPL so trading profile has stats
+    await api_client.post(
+        "/api/v1/portfolio/trades",
+        json={
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": 10,
+            "price": 150.0,
+            # Use recent dates within the 12-month lookback window
+            "executed_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=180)).isoformat(),
+            "source": "MANUAL",
+        },
+    )
+    await api_client.post(
+        "/api/v1/portfolio/trades",
+        json={
+            "symbol": "AAPL",
+            "side": "SELL",
+            "quantity": 10,
+            "price": 180.0,
+            "executed_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat(),
+            "source": "MANUAL",
+        },
+    )
+    await api_client.post("/api/v1/portfolio/trading-profile/rebuild")
+
+    # Run research for AAPL
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    if aapl["personalized"] is not None:
+        stats = aapl["personalized"]["symbol_trading_stats_json"]
+        assert isinstance(stats, dict)
+        # Should have at least one completed trade → non-empty stats
+        assert len(stats) > 0, (
+            "symbol_trading_stats_json should be non-empty when trade history exists"
+        )

@@ -83,6 +83,7 @@ def make_initial_state(
         news_items=[],
         news_score_result=None,
         news_analysis=None,
+        broker_account_id=None,
         portfolio_context=None,
         portfolio_snapshot_id=None,
         current_position_weight=0.0,

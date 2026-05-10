@@ -148,7 +148,16 @@ def make_load_portfolio_context(
             portfolio_snapshot_id = str(ctx.snapshot_id) if ctx.snapshot_id else None
             ctx_dict = ctx.as_dict()
 
-            # Load trade history stats for this symbol (M9.5)
+            # Load trade history stats for this symbol (M9.5/M9.6)
+            import contextlib
+            import uuid as _uuid
+
+            raw_ba_id = state.get("broker_account_id")
+            ba_uuid: _uuid.UUID | None = None
+            if raw_ba_id:
+                with contextlib.suppress(ValueError):
+                    ba_uuid = _uuid.UUID(raw_ba_id)
+
             symbol_trading_stats: dict[str, Any] = {}
             behavioral_flags: list[str] = []
             try:
@@ -157,8 +166,10 @@ def make_load_portfolio_context(
                     get_symbol_trading_stats,
                 )
 
-                symbol_trading_stats = await get_symbol_trading_stats(session, symbol)
-                latest_profile = await get_latest_profile(session)
+                symbol_trading_stats = await get_symbol_trading_stats(
+                    session, symbol, broker_account_id=ba_uuid
+                )
+                latest_profile = await get_latest_profile(session, broker_account_id=ba_uuid)
                 if latest_profile:
                     behavioral_flags = list(latest_profile.behavioral_flags_json or [])
             except Exception as trade_exc:

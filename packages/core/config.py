@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 30
     llm_max_retries: int = 2
 
-    # IBKR (read-only, never write)
+    # IBKR TWS/Gateway (read-only, never write)
     ibkr_enabled: bool = False
     ibkr_host: str = "localhost"
     ibkr_port: int = 7497
@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     ibkr_timeout_seconds: int = 30
     ibkr_trade_history_months: int = 12
     ibkr_readonly: bool = True
+
+    # IBKR Flex Query (historical trade import — separate from reqExecutions)
+    ibkr_flex_enabled: bool = False
+    ibkr_flex_token: str = ""        # never log; treat as secret
+    ibkr_flex_query_id: str = ""     # the numeric Flex Query ID from IBKR Account Mgmt
+    # Root URL — client appends /SendRequest and /GetStatement automatically.
+    # Example: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
+    ibkr_flex_base_url: str = (
+        "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+    )
+    # Override poll URL; if empty, derived as base_url + "/GetStatement".
+    # Normally left blank — the <Url> element in the SendRequest response is used.
+    ibkr_flex_poll_url: str = ""
+    ibkr_flex_timeout_seconds: int = 60
+    ibkr_flex_max_polls: int = 10
+    ibkr_flex_poll_interval_seconds: int = 3
 
     # News
     newsapi_key: str = ""
