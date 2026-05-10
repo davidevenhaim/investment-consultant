@@ -45,8 +45,13 @@ def _graph(
     fp: MockFundamentalsProvider,
     ms: FakeMemoryStore | None = None,
 ) -> object:
+    from news.fake_provider import FakeNewsProvider
     return build_graph_for_session(
-        session, market_provider=mp, fundamentals_provider=fp, memory_store=ms or FakeMemoryStore()
+        session,
+        market_provider=mp,
+        fundamentals_provider=fp,
+        memory_store=ms or FakeMemoryStore(),
+        news_provider=FakeNewsProvider(),
     )
 
 
@@ -198,7 +203,9 @@ async def test_analysis_completeness_populated(
     final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
 
     assert final["analysis_completeness"] > 0
-    assert "news" in final["missing_components"]
+    # M9: FakeNewsProvider is injected, so news is available → in completed, not missing
+    assert "news" in final["completed_components"]
+    # M9: No portfolio seeded in test DB → portfolio_context stays in missing
     assert "portfolio_context" in final["missing_components"]
 
 
@@ -232,8 +239,9 @@ async def test_missing_details_includes_news_and_portfolio(
 
     assert final["neutral_rec"] is not None
     missing = final["neutral_rec"].missing_details
-    assert any("M8" in d or "news" in d.lower() for d in missing)
-    assert any("M9" in d or "portfolio" in d.lower() for d in missing)
+    # M9: FakeNewsProvider provides real news, so news is no longer in missing_details.
+    # Portfolio context is missing (no portfolio seeded) → should appear.
+    assert any("portfolio" in d.lower() for d in missing)
 
 
 @pytest.mark.asyncio
@@ -542,3 +550,154 @@ async def test_no_evidence_row_when_llm_disabled(
     )
     evidence = ev_result.scalar_one_or_none()
     assert evidence is None
+
+
+@pytest.mark.asyncio
+async def test_full_graph_personalized_has_position_sizing(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    pers = final.get("personalized_rec")
+    assert pers is not None
+    # suggested_trade_json should always be a dict (may be NONE type)
+    assert pers.suggested_trade_json is not None
+    assert "trade_type" in pers.suggested_trade_json
+
+
+@pytest.mark.asyncio
+async def test_full_graph_no_errors_with_news_provider(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """Graph runs cleanly with FakeNewsProvider."""
+    run, ticker = await _make_run_and_ticker(db_session, "NVDA")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+    assert final["errors"] == []
+    assert final["neutral_rec"] is not None
+
+
+@pytest.mark.asyncio
+async def test_full_graph_portfolio_context_optional(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """Graph runs without portfolio (no account seeded) — degrades gracefully."""
+    run, ticker = await _make_run_and_ticker(db_session, "TSLA")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+    # No portfolio seeded in test DB — portfolio_context should be None
+    assert final.get("portfolio_context") is None
+    # But graph still produces recommendations
+    assert final["neutral_rec"] is not None
+    assert final["personalized_rec"] is not None
+    assert final["errors"] == []
+
+
+# ── M9 portfolio metadata fix (score_breakdown completeness) ──────────────────
+
+async def _seed_portfolio(session: AsyncSession, symbol: str, quantity: float = 10.0) -> None:
+    """Seed a default portfolio account + position for testing."""
+    from db.repositories import PortfolioPositionRepository
+    from portfolio.service import ensure_default_portfolio
+
+    account = await ensure_default_portfolio(session)
+    pos_repo = PortfolioPositionRepository(session)
+    await pos_repo.upsert_position(
+        account_id=account.id,
+        symbol=symbol,
+        quantity=quantity,
+        average_cost=150.0,
+    )
+    await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_portfolio_context_in_completed_when_portfolio_seeded(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """When portfolio is seeded, score_breakdown.completed_components includes portfolio_context."""
+    await _seed_portfolio(db_session, "AAPL")
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    breakdown = final["neutral_rec"].score_breakdown
+    assert "portfolio_context" in breakdown.completed_components
+    assert "portfolio_context" not in breakdown.missing_components
+
+
+@pytest.mark.asyncio
+async def test_portfolio_context_quality_score_one_when_seeded(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """When portfolio found, component_quality_scores['portfolio_context'] == 1.0."""
+    await _seed_portfolio(db_session, "AAPL")
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    breakdown = final["neutral_rec"].score_breakdown
+    assert breakdown.component_quality_scores.get("portfolio_context") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_portfolio_completeness_increases_when_portfolio_seeded(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """analysis_completeness_score is higher when portfolio is available vs not."""
+    # Run without portfolio to get baseline
+    run_no, ticker_no = await _make_run_and_ticker(db_session, "NVDA")
+    final_no = await _graph(db_session, market_provider, fund_provider).ainvoke(
+        make_initial_state(run_no, ticker_no, "v0.1.0")
+    )
+    completeness_no_portfolio = final_no["neutral_rec"].score_breakdown.analysis_completeness_score
+
+    # Seed portfolio, run again
+    await _seed_portfolio(db_session, "NVDA")
+    run_yes, ticker_yes = await _make_run_and_ticker(db_session, "NVDA")
+    final_yes = await _graph(db_session, market_provider, fund_provider).ainvoke(
+        make_initial_state(run_yes, ticker_yes, "v0.1.0")
+    )
+    completeness_with_portfolio = final_yes["neutral_rec"].score_breakdown.analysis_completeness_score
+
+    assert completeness_with_portfolio > completeness_no_portfolio
+
+
+@pytest.mark.asyncio
+async def test_score_breakdown_json_persisted_has_portfolio_in_completed(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """score_breakdown_json in DB reflects portfolio_context in completed_components."""
+    from sqlalchemy import select
+
+    await _seed_portfolio(db_session, "AAPL")
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider)
+    await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    from db.models import NeutralRecommendation as NeutralRecM
+
+    result = await db_session.execute(
+        select(NeutralRecM).where(NeutralRecM.research_run_id == run.id)
+    )
+    rec = result.scalar_one()
+    bd = rec.score_breakdown_json
+    assert "portfolio_context" in bd.get("completed_components", [])
+    assert "portfolio_context" not in bd.get("missing_components", [])
+    assert bd.get("component_quality_scores", {}).get("portfolio_context") == 1.0

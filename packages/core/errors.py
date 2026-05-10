@@ -86,6 +86,17 @@ class IBKRError(ExternalServiceError):
     error_code = "IBKR_ERROR"
 
 
+class IBKRConnectionError(IBKRError):
+    """IBKR connection failed or timed out."""
+    error_code = "IBKR_CONNECTION_ERROR"
+
+
+class IBKRReadOnlyError(IBKRError):
+    """Attempted a write operation on a read-only IBKR connection."""
+    status_code = 403
+    error_code = "IBKR_READ_ONLY"
+
+
 # ── Research run errors ───────────────────────────────────────────────────────
 
 

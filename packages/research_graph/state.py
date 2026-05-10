@@ -61,6 +61,8 @@ class PersonalizedRecState(BaseModel):
     policy_checks: list[dict[str, Any]] = []
     current_position_weight: float = 0.0
     max_allowed_weight: float = 0.15
+    suggested_trade_json: dict[str, Any] | None = None
+    portfolio_snapshot_id: str | None = None
 
 
 # ── Stub models for future milestones ────────────────────────────────────────
@@ -166,8 +168,22 @@ class ResearchState(TypedDict):
     missing_components: list[str]
 
     # ── portfolio (M9+) ──────────────────────────────────────────────────────
-    portfolio_snapshot: PortfolioSnapshotState | None
+    portfolio_snapshot: PortfolioSnapshotState | None  # stub, kept for compat
+    portfolio_context: dict[str, Any] | None
+    portfolio_snapshot_id: str | None
+    current_position_weight: float
+    current_position_value: float | None
+    current_quantity: float
+    cash_available: float | None
+    target_position_weight: float | None
+    suggested_trade_json: dict[str, Any] | None
     personalized_rec: PersonalizedRecState | None
+
+    # ── trading history (M9.5+) ──────────────────────────────────────────────
+    symbol_trading_stats: dict[str, Any] | None  # per-symbol stats from trading profile
+    trading_profile: dict[str, Any] | None       # full aggregate trading profile
+    behavioral_flags: list[str]                  # e.g. ["DISPOSITION_EFFECT", "LOW_WIN_RATE"]
+    ibkr_sync_available: bool                    # True if IBKR returned executions this run
 
     # ── errors + quality ─────────────────────────────────────────────────────
     # Annotated with operator.add so nodes append rather than replace.

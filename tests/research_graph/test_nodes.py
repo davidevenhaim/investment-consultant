@@ -42,6 +42,7 @@ def _base_state(symbol: str = "AAPL") -> ResearchState:
         ohlcv=None,
         technical_signals=None,
         news_items=[],
+        news_score_result=None,
         news_analysis=None,
         thesis_comparison=None,
         missing_details=None,
@@ -49,6 +50,14 @@ def _base_state(symbol: str = "AAPL") -> ResearchState:
         score_breakdown=None,
         neutral_rec=None,
         portfolio_snapshot=None,
+        portfolio_context=None,
+        portfolio_snapshot_id=None,
+        current_position_weight=0.0,
+        current_position_value=None,
+        current_quantity=0.0,
+        cash_available=None,
+        target_position_weight=None,
+        suggested_trade_json=None,
         personalized_rec=None,
         fundamentals_snapshot=None,
         fundamentals_data_quality=0.0,
@@ -409,12 +418,16 @@ def test_personalized_passes_through_buy_candidate() -> None:
 
 
 def test_personalized_passes_through_hold() -> None:
+    """HOLD with an existing position should stay HOLD."""
     state = _base_state("TSLA")
     state["neutral_rec"] = _make_neutral_rec(RecommendationAction.HOLD, 55)
     state["fundamentals_data_quality"] = 0.85
     state["data_quality_score"] = 0.95
-    state["missing_components"] = ["news", "portfolio_context"]
-    state["completed_components"] = ["market_data"]
+    state["missing_components"] = ["portfolio_context"]
+    state["completed_components"] = ["market_data", "news"]
+    # M9: must have a position for HOLD to pass through
+    state["current_quantity"] = 5.0
+    state["current_position_weight"] = 0.08
     result = personalized_recommendation(state)
     rec = result["personalized_rec"]
     assert rec is not None
@@ -685,3 +698,117 @@ def test_score_breakdown_includes_llm_metadata() -> None:
     assert bd.llm_enabled is True
     assert bd.llm_model == "fake"
     assert bd.thesis_alignment == "UNCHANGED"
+
+
+# ── M9 Portfolio tests ────────────────────────────────────────────────────────
+
+
+def _neutral_with_action(action: RecommendationAction, score: int = 65) -> NeutralRecState:
+    return NeutralRecState(
+        action=action,
+        score=score,
+        confidence=0.75,
+        final_reason=f"Score {score}/100 ({action.value}).",
+        score_breakdown=ScoreBreakdown(
+            technical_score=15.0,
+            fundamental_score=15.0,
+            valuation_score=10.0,
+            news_score=7.5,
+            portfolio_fit_score=7.0,
+            risk_score=10.0,
+            total_score=float(score),
+        ),
+    )
+
+
+def test_personalized_overweight_buy_becomes_hold():
+    state = _base_state()
+    state["neutral_rec"] = _neutral_with_action(RecommendationAction.BUY_CANDIDATE, 72)
+    state["current_position_weight"] = 0.16  # above default max 0.15
+    state["current_quantity"] = 10.0
+    state["fundamentals_data_quality"] = 0.9  # avoid fdq gate
+    state["data_quality_score"] = 0.95
+    state["portfolio_context"] = {"max_single_stock_weight": 0.15, "total_equity": 50000.0}
+    state["strategy_config"] = {"risk_policy": {"max_single_stock_weight": 0.15}}
+
+    result = personalized_recommendation(state)
+    rec = result["personalized_rec"]
+    assert rec.personal_action == RecommendationAction.HOLD
+
+
+def test_personalized_no_position_hold_becomes_watchlist():
+    state = _base_state()
+    state["neutral_rec"] = _neutral_with_action(RecommendationAction.HOLD, 55)
+    state["current_position_weight"] = 0.0
+    state["current_quantity"] = 0.0
+    state["portfolio_context"] = {}
+
+    result = personalized_recommendation(state)
+    rec = result["personalized_rec"]
+    assert rec.personal_action == RecommendationAction.WATCHLIST
+
+
+def test_personalized_reduce_no_position_becomes_no_action():
+    state = _base_state()
+    state["neutral_rec"] = _neutral_with_action(RecommendationAction.REDUCE, 40)
+    state["current_position_weight"] = 0.0
+    state["current_quantity"] = 0.0
+    state["portfolio_context"] = {}
+
+    result = personalized_recommendation(state)
+    rec = result["personalized_rec"]
+    assert rec.personal_action == RecommendationAction.NO_ACTION
+
+
+def test_personalized_buy_with_no_position_stays_buy():
+    """BUY_CANDIDATE with no position and room → stays BUY_CANDIDATE."""
+    state = _base_state()
+    state["neutral_rec"] = _neutral_with_action(RecommendationAction.BUY_CANDIDATE, 75)
+    state["current_position_weight"] = 0.0
+    state["current_quantity"] = 0.0
+    state["data_quality_score"] = 0.95
+    state["fundamentals_data_quality"] = 0.9
+    state["portfolio_context"] = {
+        "max_single_stock_weight": 0.15, "total_equity": 50000.0, "risk_level": "MEDIUM"
+    }
+    state["strategy_config"] = {
+        "risk_policy": {"max_single_stock_weight": 0.15, "min_confidence_to_buy": 0.65}
+    }
+
+    result = personalized_recommendation(state)
+    rec = result["personalized_rec"]
+    assert rec.personal_action == RecommendationAction.BUY_CANDIDATE
+
+
+def test_position_sizing_json_populated():
+    state = _base_state()
+    state["neutral_rec"] = _neutral_with_action(RecommendationAction.BUY_CANDIDATE, 75)
+    state["current_position_weight"] = 0.0
+    state["current_quantity"] = 0.0
+    state["data_quality_score"] = 0.95
+    state["fundamentals_data_quality"] = 0.9
+    state["portfolio_context"] = {
+        "max_single_stock_weight": 0.15,
+        "total_equity": 50000.0,
+        "risk_level": "MEDIUM",
+    }
+    state["strategy_config"] = {
+        "risk_policy": {"max_single_stock_weight": 0.15, "min_confidence_to_buy": 0.65}
+    }
+
+    result = personalized_recommendation(state)
+    rec = result["personalized_rec"]
+    assert rec.suggested_trade_json is not None
+    assert "trade_type" in rec.suggested_trade_json
+
+
+def test_personalized_no_portfolio_context_uses_defaults():
+    """No portfolio_context in state → falls back to safe defaults."""
+    state = _base_state()
+    state["neutral_rec"] = _neutral_with_action(RecommendationAction.HOLD, 55)
+    # No portfolio_context, no current_quantity → no portfolio data
+    result = personalized_recommendation(state)
+    assert "personalized_rec" in result
+    rec = result["personalized_rec"]
+    # HOLD + no position (current_quantity=0 default) → WATCHLIST
+    assert rec.personal_action == RecommendationAction.WATCHLIST

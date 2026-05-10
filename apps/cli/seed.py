@@ -234,6 +234,53 @@ async def seed() -> None:
             else:
                 logger.info("seed_watchlist_exists", symbol=existing.symbol)
 
+        # M9: Default portfolio account + positions
+        from db.repositories import (  # noqa: PLC0415
+            PortfolioAccountRepository,
+            PortfolioPositionRepository,
+        )
+        from portfolio.service import (  # noqa: PLC0415
+            build_portfolio_snapshot,
+            refresh_portfolio_prices,
+        )
+
+        acc_repo = PortfolioAccountRepository(session)
+        account = await acc_repo.get_default()
+        if account is None:
+            account = await acc_repo.create(
+                name="Default Manual Portfolio",
+                account_type="MANUAL",
+                cash_balance=10000.0,
+            )
+            logger.info("seed_portfolio_account_created", account_id=str(account.id))
+        else:
+            logger.info("seed_portfolio_account_exists", account_id=str(account.id))
+
+        seed_positions: list[tuple[str, float, float]] = [
+            ("AAPL", 10.0, 190.0),
+            ("NVDA", 5.0, 120.0),
+            ("TSLA", 3.0, 250.0),
+        ]
+        pos_repo = PortfolioPositionRepository(session)
+        for sym, qty, cost in seed_positions:
+            existing_pos = await pos_repo.get_by_symbol(account.id, sym)
+            if existing_pos is None:
+                await pos_repo.upsert_position(
+                    account_id=account.id,
+                    symbol=sym,
+                    quantity=qty,
+                    average_cost=cost,
+                )
+                logger.info("seed_position_added", symbol=sym)
+            else:
+                logger.info("seed_position_exists", symbol=sym)
+
+        # Refresh prices and build snapshot
+        await session.flush()
+        await refresh_portfolio_prices(session, account.id)
+        await build_portfolio_snapshot(session, account.id)
+        logger.info("seed_portfolio_snapshot_built")
+
         await session.commit()
         logger.info("seed_complete")
 

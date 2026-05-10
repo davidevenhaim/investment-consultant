@@ -33,6 +33,12 @@ __all__ = [
     "MarketPrice",
     "CompanyFundamentals",
     "NewsItem",
+    "PortfolioAccount",
+    "PortfolioPosition",
+    "PortfolioSnapshot",
+    "IBKRExecution",
+    "ManualTrade",
+    "TradingProfileSnapshot",
     "MemoryIndexEvent",
     "StrategyVersion",
     "PromptVersion",
@@ -143,6 +149,156 @@ class NewsItem(Base, UUIDMixin, TimestampMixin):
     relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     importance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_duplicate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PortfolioAccount(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "portfolio_accounts"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    account_type: Mapped[str] = mapped_column(String(50), nullable=False, default="MANUAL")
+    base_currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    cash_balance: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class PortfolioPosition(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "portfolio_positions"
+    __table_args__ = (
+        UniqueConstraint("account_id", "symbol", name="uq_position_account_symbol"),
+        Index("ix_portfolio_positions_account_id", "account_id"),
+        Index("ix_portfolio_positions_symbol", "symbol"),
+        Index("ix_portfolio_positions_account_weight", "account_id", "weight"),
+    )
+
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("portfolio_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    average_cost: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    current_price: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    market_value: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    cost_basis: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    unrealized_pnl: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    unrealized_pnl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    as_of_time: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+
+    account: Mapped["PortfolioAccount"] = relationship("PortfolioAccount")
+
+
+class PortfolioSnapshot(Base, UUIDMixin):
+    __tablename__ = "portfolio_snapshots"
+    __table_args__ = (
+        Index("ix_portfolio_snapshots_account_id", "account_id"),
+        Index("ix_portfolio_snapshots_as_of_time", "as_of_time"),
+        Index("ix_portfolio_snapshots_account_time", "account_id", "as_of_time"),
+    )
+
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("portfolio_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    total_market_value: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    cash_balance: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    total_equity: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    number_of_positions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_position_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_positions_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    sector_exposure_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    risk_metrics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    as_of_time: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    account: Mapped["PortfolioAccount"] = relationship("PortfolioAccount")
+
+
+class IBKRExecution(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "ibkr_executions"
+    __table_args__ = (
+        UniqueConstraint("exec_id", name="uq_ibkr_exec_id"),
+        Index("ix_ibkr_executions_symbol", "symbol"),
+        Index("ix_ibkr_executions_executed_at", "executed_at"),
+        Index("ix_ibkr_executions_symbol_date", "symbol", "executed_at"),
+        Index("ix_ibkr_executions_account", "account_id_ibkr"),
+        Index("ix_ibkr_executions_side", "side"),
+    )
+
+    account_id_ibkr: Mapped[str] = mapped_column(String(50), nullable=False)
+    exec_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    exchange: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    side: Mapped[str] = mapped_column(String(10), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    price: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    commission: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    executed_at: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    order_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+
+class ManualTrade(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "manual_trades"
+    __table_args__ = (
+        Index("ix_manual_trades_symbol", "symbol"),
+        Index("ix_manual_trades_executed_at", "executed_at"),
+        Index("ix_manual_trades_symbol_date", "symbol", "executed_at"),
+    )
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    side: Mapped[str] = mapped_column(String(10), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    price: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    executed_at: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="manual")
+
+
+class TradingProfileSnapshot(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "trading_profile_snapshots"
+    __table_args__ = (
+        Index("ix_trading_profile_as_of_date", "as_of_date"),
+        Index("ix_trading_profile_period", "period_months"),
+    )
+
+    period_months: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    as_of_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    total_executions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_symbols_traded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    win_rate: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    avg_winner_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    avg_loser_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    profit_factor: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    avg_holding_days: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    disposition_effect_score: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    concentration_score: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    recency_bias_score: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    behavioral_flags_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    per_symbol_stats_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    sector_stats_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    raw_metrics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
 
 class StrategyVersion(Base, UUIDMixin, TimestampMixin):

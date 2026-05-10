@@ -136,3 +136,29 @@ async def test_score_breakdown_json_with_fake_llm_enabled(
     assert bd["llm_enabled"] is True
     assert bd["llm_model"] is not None
     assert bd["thesis_alignment"] != ""
+
+
+@pytest.mark.asyncio
+async def test_latest_recommendations_includes_personalized_field(api_client: AsyncClient) -> None:
+    await api_client.post("/api/v1/watchlist", json={"symbol": "AAPL"})
+    run_resp = await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+    assert run_resp.status_code == 201
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next(d for d in data if d["symbol"] == "AAPL")
+    # personalized field must be present (may be None or dict)
+    assert "personalized" in aapl
+
+
+@pytest.mark.asyncio
+async def test_personalized_includes_position_sizing_json(api_client: AsyncClient) -> None:
+    await api_client.post("/api/v1/watchlist", json={"symbol": "AAPL"})
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next(d for d in data if d["symbol"] == "AAPL")
+    if aapl["personalized"] is not None:
+        assert "position_sizing_json" in aapl["personalized"]
+        assert isinstance(aapl["personalized"]["position_sizing_json"], dict)

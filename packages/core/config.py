@@ -31,9 +31,13 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
 
     # IBKR (read-only, never write)
+    ibkr_enabled: bool = False
     ibkr_host: str = "localhost"
     ibkr_port: int = 7497
     ibkr_client_id: int = 1
+    ibkr_timeout_seconds: int = 30
+    ibkr_trade_history_months: int = 12
+    ibkr_readonly: bool = True
 
     # News
     newsapi_key: str = ""

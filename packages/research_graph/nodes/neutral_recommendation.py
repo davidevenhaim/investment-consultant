@@ -314,9 +314,15 @@ def _build_completeness(
     fundamentals: Any,
     fundamentals_dq: float,
     market_dq: float,
+    news_available: bool = False,
 ) -> tuple[list[str], list[str], float, str]:
     completed: list[str] = []
-    missing: list[str] = ["news", "portfolio_context"]
+    missing: list[str] = ["portfolio_context"]  # load_portfolio_context updates this
+
+    if news_available:
+        completed.append("news")
+    else:
+        missing.append("news")
 
     if signals:
         completed.extend(["market_data", "technical_signals", "price_risk"])
@@ -373,8 +379,9 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
         raw = tech + risk + fund + val + news_score + portfolio_fit_stub
         total = round(min(100.0, max(0.0, raw)))
 
+        news_available = news_score_result is not None and not news_score_result.no_data
         completed, missing, completeness, scope = _build_completeness(
-            signals or None, fundamentals, fdq, market_dq
+            signals or None, fundamentals, fdq, market_dq, news_available=news_available
         )
 
         # Component quality scores

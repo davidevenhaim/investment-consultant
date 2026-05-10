@@ -11,14 +11,21 @@ from sqlalchemy.orm import selectinload
 from db.enums import ResearchRunStatus, ResearchRunType, TickerRunStatus
 from db.models import (
     AuditLog,
+    IBKRExecution,
     InvestorProfile,
     JobEvent,
+    ManualTrade,
     MemoryIndexEvent,
     NeutralRecommendation,
+    PersonalizedRecommendation,
+    PortfolioAccount,
+    PortfolioPosition,
+    PortfolioSnapshot,
     PromptVersion,
     ResearchRun,
     ResearchRunTicker,
     StrategyVersion,
+    TradingProfileSnapshot,
     WatchlistSymbol,
 )
 
@@ -331,6 +338,33 @@ class RecommendationRepository:
         result = await self._s.execute(q)
         return list(result.scalars().all())
 
+    async def get_latest_personalized_by_neutral_ids(
+        self, neutral_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, PersonalizedRecommendation]:
+        """Return most recent personalized rec for each neutral_recommendation_id."""
+        if not neutral_ids:
+            return {}
+        from sqlalchemy import func as sqlfunc
+
+        subq = (
+            select(
+                PersonalizedRecommendation.neutral_recommendation_id,
+                sqlfunc.max(PersonalizedRecommendation.created_at).label("max_created"),
+            )
+            .where(PersonalizedRecommendation.neutral_recommendation_id.in_(neutral_ids))
+            .group_by(PersonalizedRecommendation.neutral_recommendation_id)
+            .subquery()
+        )
+        nr_id_col = PersonalizedRecommendation.neutral_recommendation_id
+        q = select(PersonalizedRecommendation).join(
+            subq,
+            (nr_id_col == subq.c.neutral_recommendation_id)
+            & (PersonalizedRecommendation.created_at == subq.c.max_created),
+        )
+        result = await self._s.execute(q)
+        rows = result.scalars().all()
+        return {r.neutral_recommendation_id: r for r in rows}
+
 
 class JobEventRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -408,3 +442,391 @@ class MemoryIndexEventRepository:
         self._s.add(ev)
         await self._s.flush()
         return ev
+
+
+class PortfolioAccountRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def get_active(self) -> list[PortfolioAccount]:
+        result = await self._s.execute(
+            select(PortfolioAccount)
+            .where(PortfolioAccount.is_active.is_(True))
+            .order_by(PortfolioAccount.created_at)
+        )
+        return list(result.scalars().all())
+
+    async def get_default(self) -> PortfolioAccount | None:
+        result = await self._s.execute(
+            select(PortfolioAccount)
+            .where(PortfolioAccount.is_active.is_(True))
+            .order_by(PortfolioAccount.created_at)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(
+        self,
+        name: str,
+        account_type: str = "MANUAL",
+        base_currency: str = "USD",
+        cash_balance: float = 0.0,
+    ) -> PortfolioAccount:
+        acc = PortfolioAccount(
+            name=name,
+            account_type=account_type,
+            base_currency=base_currency,
+            cash_balance=cash_balance,
+            is_active=True,
+        )
+        self._s.add(acc)
+        await self._s.flush()
+        await self._s.refresh(acc)
+        return acc
+
+    async def get_or_create_default(self) -> PortfolioAccount:
+        existing = await self.get_default()
+        if existing is not None:
+            return existing
+        return await self.create(name="Default Manual Portfolio", cash_balance=10000.0)
+
+    async def update_cash(self, account_id: uuid.UUID, cash_balance: float) -> None:
+        await self._s.execute(
+            update(PortfolioAccount)
+            .where(PortfolioAccount.id == account_id)
+            .values(cash_balance=cash_balance, updated_at=datetime.now(UTC))
+        )
+        await self._s.flush()
+
+
+class PortfolioPositionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def list_by_account(self, account_id: uuid.UUID) -> list[PortfolioPosition]:
+        result = await self._s.execute(
+            select(PortfolioPosition)
+            .where(PortfolioPosition.account_id == account_id)
+            .order_by(PortfolioPosition.symbol)
+        )
+        return list(result.scalars().all())
+
+    async def get_by_symbol(
+        self, account_id: uuid.UUID, symbol: str
+    ) -> PortfolioPosition | None:
+        result = await self._s.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.account_id == account_id,
+                PortfolioPosition.symbol == symbol.upper(),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_position(
+        self,
+        account_id: uuid.UUID,
+        symbol: str,
+        quantity: float,
+        average_cost: float | None = None,
+        current_price: float | None = None,
+    ) -> PortfolioPosition:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        now = datetime.now(UTC)
+        market_value = (quantity * current_price) if current_price is not None else None
+        cost_basis = (quantity * average_cost) if average_cost is not None else None
+        unrealized_pnl: float | None = None
+        unrealized_pnl_pct: float | None = None
+        if market_value is not None and cost_basis is not None and cost_basis != 0:
+            unrealized_pnl = market_value - cost_basis
+            unrealized_pnl_pct = unrealized_pnl / cost_basis
+
+        row: dict[str, Any] = {
+            "account_id": account_id,
+            "symbol": symbol.upper(),
+            "quantity": quantity,
+            "average_cost": average_cost,
+            "current_price": current_price,
+            "market_value": market_value,
+            "cost_basis": cost_basis,
+            "unrealized_pnl": unrealized_pnl,
+            "unrealized_pnl_pct": unrealized_pnl_pct,
+            "weight": None,
+            "as_of_time": now,
+        }
+        stmt = (
+            pg_insert(PortfolioPosition)
+            .values([row])
+            .on_conflict_do_update(
+                constraint="uq_position_account_symbol",
+                set_={
+                    "quantity": row["quantity"],
+                    "average_cost": row["average_cost"],
+                    "current_price": row["current_price"],
+                    "market_value": row["market_value"],
+                    "cost_basis": row["cost_basis"],
+                    "unrealized_pnl": row["unrealized_pnl"],
+                    "unrealized_pnl_pct": row["unrealized_pnl_pct"],
+                    "as_of_time": row["as_of_time"],
+                    "updated_at": now,
+                },
+            )
+        )
+        await self._s.execute(stmt)
+        await self._s.flush()
+        # Re-query to get the fresh row (identity map may have stale data after upsert)
+        result = await self._s.execute(
+            select(PortfolioPosition).where(
+                PortfolioPosition.account_id == account_id,
+                PortfolioPosition.symbol == symbol.upper(),
+            )
+        )
+        pos = result.scalar_one()
+        await self._s.refresh(pos)
+        return pos
+
+    async def delete_position(self, account_id: uuid.UUID, symbol: str) -> bool:
+        from sqlalchemy import delete as sa_delete
+
+        existing = await self.get_by_symbol(account_id, symbol)
+        if existing is None:
+            return False
+        await self._s.execute(
+            sa_delete(PortfolioPosition).where(
+                PortfolioPosition.account_id == account_id,
+                PortfolioPosition.symbol == symbol.upper(),
+            )
+        )
+        await self._s.flush()
+        return True
+
+    async def update_weights(
+        self, account_id: uuid.UUID, total_equity: float
+    ) -> None:
+        """Recompute weight for each position given total_equity."""
+        positions = await self.list_by_account(account_id)
+        now = datetime.now(UTC)
+        for pos in positions:
+            if pos.market_value is not None and total_equity > 0:
+                pos.weight = float(pos.market_value) / total_equity
+            else:
+                pos.weight = None
+            pos.updated_at = now
+        await self._s.flush()
+
+
+class PortfolioSnapshotRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def latest(self, account_id: uuid.UUID) -> PortfolioSnapshot | None:
+        result = await self._s.execute(
+            select(PortfolioSnapshot)
+            .where(PortfolioSnapshot.account_id == account_id)
+            .order_by(PortfolioSnapshot.as_of_time.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_snapshot(
+        self,
+        account_id: uuid.UUID,
+        positions: list[PortfolioPosition],
+        cash_balance: float,
+    ) -> PortfolioSnapshot:
+        now = datetime.now(UTC)
+        total_market_value = sum(
+            float(p.market_value) for p in positions if p.market_value is not None
+        )
+        total_equity = total_market_value + cash_balance
+
+        weights = [
+            float(p.market_value) / total_equity
+            if p.market_value is not None and total_equity > 0
+            else 0.0
+            for p in positions
+        ]
+        max_weight = max(weights) if weights else None
+
+        top_positions_raw = [
+            {
+                "symbol": p.symbol,
+                "weight": round(float(p.market_value) / total_equity, 4)
+                if p.market_value and total_equity > 0
+                else 0.0,
+                "market_value": float(p.market_value) if p.market_value else None,
+            }
+            for p in positions
+        ]
+        top_positions = sorted(
+            top_positions_raw,
+            key=lambda x: float(x["weight"]),  # type: ignore[arg-type]
+            reverse=True,
+        )[:5]
+
+        concentration = max_weight or 0.0
+        cash_pct = cash_balance / total_equity if total_equity > 0 else 1.0
+        largest = (
+            max(positions, key=lambda p: float(p.market_value or 0)).symbol
+            if positions
+            else None
+        )
+        risk_metrics: dict[str, Any] = {
+            "concentration_score": round(concentration, 4),
+            "cash_pct": round(cash_pct, 4),
+            "largest_position_symbol": largest,
+            "largest_position_weight": round(max_weight, 4) if max_weight else None,
+        }
+
+        snap = PortfolioSnapshot(
+            account_id=account_id,
+            total_market_value=total_market_value,
+            cash_balance=cash_balance,
+            total_equity=total_equity,
+            number_of_positions=len(positions),
+            max_position_weight=max_weight,
+            top_positions_json=top_positions,
+            sector_exposure_json={},
+            risk_metrics_json=risk_metrics,
+            as_of_time=now,
+        )
+        self._s.add(snap)
+        await self._s.flush()
+        await self._s.refresh(snap)
+        return snap
+
+
+class IBKRExecutionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def exists_by_exec_id(self, exec_id: str) -> bool:
+        result = await self._s.execute(
+            select(IBKRExecution.id).where(IBKRExecution.exec_id == exec_id)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def create(self, ex: Any) -> IBKRExecution:
+        row = IBKRExecution(
+            account_id_ibkr=ex.account_id_ibkr,
+            exec_id=ex.exec_id,
+            symbol=ex.symbol,
+            exchange=ex.exchange,
+            side=ex.side,
+            quantity=ex.quantity,
+            price=ex.price,
+            commission=ex.commission,
+            currency=ex.currency,
+            executed_at=ex.executed_at,
+            order_ref=ex.order_ref,
+            raw_json=ex.raw_json or {},
+        )
+        self._s.add(row)
+        await self._s.flush()
+        await self._s.refresh(row)
+        return row
+
+    async def list_since(
+        self,
+        since: datetime,
+        symbol: str | None = None,
+    ) -> list[IBKRExecution]:
+        q = select(IBKRExecution).where(IBKRExecution.executed_at >= since)
+        if symbol:
+            q = q.where(IBKRExecution.symbol == symbol)
+        q = q.order_by(IBKRExecution.executed_at)
+        result = await self._s.execute(q)
+        return list(result.scalars().all())
+
+    async def list_by_symbol(self, symbol: str) -> list[IBKRExecution]:
+        result = await self._s.execute(
+            select(IBKRExecution)
+            .where(IBKRExecution.symbol == symbol)
+            .order_by(IBKRExecution.executed_at)
+        )
+        return list(result.scalars().all())
+
+
+class ManualTradeRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def create(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        executed_at: datetime,
+        notes: str | None = None,
+        source: str = "manual",
+    ) -> ManualTrade:
+        row = ManualTrade(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            executed_at=executed_at,
+            notes=notes,
+            source=source,
+        )
+        self._s.add(row)
+        await self._s.flush()
+        await self._s.refresh(row)
+        return row
+
+    async def list_since(
+        self,
+        since: datetime,
+        symbol: str | None = None,
+    ) -> list[ManualTrade]:
+        q = select(ManualTrade).where(ManualTrade.executed_at >= since)
+        if symbol:
+            q = q.where(ManualTrade.symbol == symbol)
+        q = q.order_by(ManualTrade.executed_at)
+        result = await self._s.execute(q)
+        return list(result.scalars().all())
+
+    async def list_by_symbol(self, symbol: str) -> list[ManualTrade]:
+        result = await self._s.execute(
+            select(ManualTrade)
+            .where(ManualTrade.symbol == symbol)
+            .order_by(ManualTrade.executed_at)
+        )
+        return list(result.scalars().all())
+
+
+class TradingProfileSnapshotRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def latest(self, period_months: int | None = None) -> TradingProfileSnapshot | None:
+        q = select(TradingProfileSnapshot)
+        if period_months is not None:
+            q = q.where(TradingProfileSnapshot.period_months == period_months)
+        q = q.order_by(TradingProfileSnapshot.as_of_date.desc()).limit(1)
+        result = await self._s.execute(q)
+        return result.scalar_one_or_none()
+
+    async def create(self, profile: Any) -> TradingProfileSnapshot:
+        row = TradingProfileSnapshot(
+            period_months=profile.period_months,
+            as_of_date=profile.as_of_date,
+            total_executions=profile.total_executions,
+            total_symbols_traded=profile.total_symbols_traded,
+            win_rate=profile.win_rate,
+            avg_winner_pct=profile.avg_winner_pct,
+            avg_loser_pct=profile.avg_loser_pct,
+            profit_factor=profile.profit_factor,
+            avg_holding_days=profile.avg_holding_days,
+            disposition_effect_score=profile.disposition_effect_score,
+            concentration_score=profile.concentration_score,
+            recency_bias_score=profile.recency_bias_score,
+            behavioral_flags_json=profile.behavioral_flags or [],
+            per_symbol_stats_json=profile.per_symbol_stats or {},
+            raw_metrics_json=profile.raw_metrics or {},
+        )
+        self._s.add(row)
+        await self._s.flush()
+        await self._s.refresh(row)
+        return row

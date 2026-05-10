@@ -135,10 +135,32 @@ def build_context(state: dict[str, Any]) -> str:
     else:
         lines.append("No news data available.")
 
+    # ── M9.5: trading history context ────────────────────────────────────────
+    symbol_trading_stats: dict[str, Any] | None = state.get("symbol_trading_stats")
+    behavioral_flags: list[str] = state.get("behavioral_flags") or []
+    if symbol_trading_stats:
+        lines.append("")
+        lines.append(f"=== Historical Trading Profile for {symbol} ===")
+        wr = symbol_trading_stats.get("win_rate")
+        lines.append(f"Win rate: {wr:.1%}" if wr is not None else "Win rate: N/A")
+        aw = symbol_trading_stats.get("avg_winner_pct")
+        al = symbol_trading_stats.get("avg_loser_pct")
+        if aw is not None:
+            lines.append(f"Avg winner: +{aw:.1%}")
+        if al is not None:
+            lines.append(f"Avg loser: {al:.1%}")
+        hd = symbol_trading_stats.get("avg_holding_days")
+        if hd is not None:
+            lines.append(f"Avg holding period: {hd:.0f} days")
+        ct = symbol_trading_stats.get("completed_trades")
+        if ct is not None:
+            lines.append(f"Completed trades: {ct}")
+        if behavioral_flags:
+            lines.append(f"Behavioral flags: {', '.join(behavioral_flags)}")
+
     lines += [
         "",
         "=== Data Gaps (do not speculate about these) ===",
-        "Portfolio context: NOT AVAILABLE (M9 pending)",
         "SEC filings: NOT AVAILABLE (M17 pending)",
     ]
 

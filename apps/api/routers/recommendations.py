@@ -2,7 +2,11 @@ from typing import Any
 
 from core.responses import api_response
 from db.repositories import RecommendationRepository, WatchlistRepository
-from db.schemas import LatestRecommendationResponse, NeutralRecommendationResponse
+from db.schemas import (
+    LatestRecommendationResponse,
+    NeutralRecommendationResponse,
+    PersonalizedRecommendationResponse,
+)
 from db.session import get_db
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,24 +26,37 @@ async def latest_recommendations(
     recs = await rec_repo.get_latest_per_symbol(symbols if symbols else None)
     rec_by_symbol = {r.symbol: r for r in recs}
 
+    # Load personalized recs for each neutral rec
+    neutral_ids = [r.id for r in recs]
+    personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(neutral_ids)
+
     result = []
     for symbol in symbols:
-        rec = rec_by_symbol.get(symbol)
+        neutral = rec_by_symbol.get(symbol)
+        pers = personalized_by_neutral.get(neutral.id) if neutral else None
         result.append(
             LatestRecommendationResponse(
                 symbol=symbol,
-                neutral=NeutralRecommendationResponse.model_validate(rec) if rec else None,
+                neutral=NeutralRecommendationResponse.model_validate(neutral) if neutral else None,
+                personalized=(
+                    PersonalizedRecommendationResponse.model_validate(pers) if pers else None
+                ),
             ).model_dump()
         )
 
     # If no watchlist, return whatever recs exist
     if not symbols and recs:
-        result = [
-            LatestRecommendationResponse(
-                symbol=r.symbol,
-                neutral=NeutralRecommendationResponse.model_validate(r),
-            ).model_dump()
-            for r in recs
-        ]
+        result = []
+        for r in recs:
+            pers = personalized_by_neutral.get(r.id)
+            result.append(
+                LatestRecommendationResponse(
+                    symbol=r.symbol,
+                    neutral=NeutralRecommendationResponse.model_validate(r),
+                    personalized=(
+                        PersonalizedRecommendationResponse.model_validate(pers) if pers else None
+                    ),
+                ).model_dump()
+            )
 
     return api_response(result, request)

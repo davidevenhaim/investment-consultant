@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -135,6 +135,145 @@ class NeutralRecommendationResponse(_OrmBase):
     created_at: datetime
 
 
+class PersonalizedRecommendationResponse(_OrmBase):
+    id: uuid.UUID
+    neutral_recommendation_id: uuid.UUID
+    symbol: str
+    personal_action: str
+    personal_reason: str
+    position_sizing_json: dict[str, Any]
+    policy_checks_json: list[Any]
+    current_position_weight: float | None
+    max_allowed_weight: float | None
+    portfolio_snapshot_id: uuid.UUID | None
+    created_at: datetime
+
+
 class LatestRecommendationResponse(BaseModel):
     symbol: str
     neutral: NeutralRecommendationResponse | None = None
+    personalized: PersonalizedRecommendationResponse | None = None
+
+
+# ── Portfolio ─────────────────────────────────────────────────────────────────
+
+
+class PortfolioPositionCreate(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    quantity: float = Field(gt=0)
+    average_cost: float | None = Field(default=None, gt=0)
+
+
+class PortfolioPositionResponse(_OrmBase):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    symbol: str
+    quantity: float
+    average_cost: float | None
+    current_price: float | None
+    market_value: float | None
+    cost_basis: float | None
+    unrealized_pnl: float | None
+    unrealized_pnl_pct: float | None
+    weight: float | None
+    as_of_time: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class PortfolioAccountResponse(_OrmBase):
+    id: uuid.UUID
+    name: str
+    account_type: str
+    base_currency: str
+    cash_balance: float
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class PortfolioSnapshotResponse(_OrmBase):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    total_market_value: float
+    cash_balance: float
+    total_equity: float
+    number_of_positions: int
+    max_position_weight: float | None
+    top_positions_json: list[Any]
+    risk_metrics_json: dict[str, Any]
+    as_of_time: datetime
+    created_at: datetime
+
+
+class PortfolioSummaryResponse(BaseModel):
+    account: PortfolioAccountResponse
+    snapshot: PortfolioSnapshotResponse | None
+    positions: list[PortfolioPositionResponse]
+
+
+# ── Trade history ─────────────────────────────────────────────────────────────
+
+
+class ManualTradeCreate(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    side: Literal["BUY", "SELL"]
+    quantity: float = Field(gt=0)
+    price: float = Field(gt=0)
+    executed_at: datetime
+    notes: str | None = None
+    source: str = "manual"
+
+
+class ManualTradeResponse(_OrmBase):
+    id: uuid.UUID
+    symbol: str
+    side: str
+    quantity: float
+    price: float
+    executed_at: datetime
+    notes: str | None
+    source: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class IBKRExecutionResponse(_OrmBase):
+    id: uuid.UUID
+    account_id_ibkr: str
+    exec_id: str
+    symbol: str
+    exchange: str | None
+    side: str
+    quantity: float
+    price: float
+    commission: float | None
+    currency: str
+    executed_at: datetime
+    order_ref: str | None
+    created_at: datetime
+
+
+class TradingProfileResponse(_OrmBase):
+    id: uuid.UUID
+    period_months: int
+    as_of_date: datetime
+    total_executions: int
+    total_symbols_traded: int
+    win_rate: float | None
+    avg_winner_pct: float | None
+    avg_loser_pct: float | None
+    profit_factor: float | None
+    avg_holding_days: float | None
+    disposition_effect_score: float | None
+    concentration_score: float | None
+    recency_bias_score: float | None
+    behavioral_flags_json: list[Any]
+    per_symbol_stats_json: dict[str, Any]
+    raw_metrics_json: dict[str, Any]
+    created_at: datetime
+
+
+class IBKRSyncResponse(BaseModel):
+    inserted: int
+    message: str

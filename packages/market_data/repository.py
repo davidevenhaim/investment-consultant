@@ -104,3 +104,19 @@ class MarketPriceRepository:
             )
         )
         return result.scalar()
+
+    async def get_latest_close(
+        self, symbol: str, provider: str = "yfinance"
+    ) -> float | None:
+        """Return most recent closing price for symbol."""
+        result = await self._s.execute(
+            select(MarketPrice.close)
+            .where(
+                MarketPrice.symbol == symbol.upper(),
+                MarketPrice.provider == provider,
+            )
+            .order_by(MarketPrice.price_date.desc())
+            .limit(1)
+        )
+        val = result.scalar()
+        return float(val) if val is not None else None

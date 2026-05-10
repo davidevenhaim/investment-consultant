@@ -1,7 +1,7 @@
-"""Build the M8 research graph.
+"""Build the M9 research graph.
 
 Session-in-closure pattern: nodes needing DB get it bound via factory functions.
-Graph shape is always stable — llm_analysis and fetch_news always run (return stubs if disabled).
+Graph shape is always stable — every node runs (returns stubs if disabled).
 """
 from typing import Any
 
@@ -18,6 +18,7 @@ from research_graph.nodes.fetch_fundamentals import make_fetch_fundamentals
 from research_graph.nodes.fetch_market_data import make_fetch_market_data
 from research_graph.nodes.fetch_news import make_fetch_news
 from research_graph.nodes.llm_analysis import make_llm_analysis
+from research_graph.nodes.load_portfolio_context import make_load_portfolio_context
 from research_graph.nodes.load_ticker_context import load_ticker_context
 from research_graph.nodes.neutral_recommendation import neutral_recommendation
 from research_graph.nodes.persist_results import make_persist_results
@@ -38,10 +39,10 @@ def build_graph_for_session(
     Compile research graph with DB session bound into all DB-dependent nodes.
     All providers may be injected for testing; defaults to live implementations.
 
-    Graph (M8):
+    Graph (M9):
     LoadTickerContext → RetrieveMemory → FetchMarketData → ComputeSignals
     → FetchFundamentals → FetchNews → LLMAnalysis → NeutralRecommendation
-    → PersonalizedRecommendation → PersistResults
+    → LoadPortfolioContext → PersonalizedRecommendation → PersistResults
     """
     fetch_fn: Any = make_fetch_market_data(session, market_provider)
     signals_fn: Any = make_compute_signals(session, market_provider)
@@ -49,6 +50,7 @@ def build_graph_for_session(
     news_fn: Any = make_fetch_news(session, news_provider)
     retrieve_fn: Any = make_retrieve_memory(store=memory_store)
     llm_fn: Any = make_llm_analysis(session, llm_client=llm_client)
+    portfolio_fn: Any = make_load_portfolio_context(session)
     persist_fn: Any = make_persist_results(session, memory_store=memory_store)
 
     builder: StateGraph = StateGraph(ResearchState)  # type: ignore[type-arg]
@@ -61,6 +63,7 @@ def build_graph_for_session(
     builder.add_node("fetch_news", news_fn)
     builder.add_node("llm_analysis", llm_fn)
     builder.add_node("neutral_recommendation", neutral_recommendation)
+    builder.add_node("load_portfolio_context", portfolio_fn)
     builder.add_node("personalized_recommendation", personalized_recommendation)
     builder.add_node("persist_results", persist_fn)
 
@@ -72,7 +75,8 @@ def build_graph_for_session(
     builder.add_edge("fetch_fundamentals", "fetch_news")
     builder.add_edge("fetch_news", "llm_analysis")
     builder.add_edge("llm_analysis", "neutral_recommendation")
-    builder.add_edge("neutral_recommendation", "personalized_recommendation")
+    builder.add_edge("neutral_recommendation", "load_portfolio_context")
+    builder.add_edge("load_portfolio_context", "personalized_recommendation")
     builder.add_edge("personalized_recommendation", "persist_results")
     builder.add_edge("persist_results", END)
 

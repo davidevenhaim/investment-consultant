@@ -17,6 +17,7 @@ from apps.api.routers import (
     market_data,
     memory,
     news,
+    portfolio,
     recommendations,
     research_runs,
     risk_profile,
@@ -101,6 +102,7 @@ app.include_router(market_data.router, prefix="/api/v1")
 app.include_router(fundamentals.router, prefix="/api/v1")
 app.include_router(memory.router, prefix="/api/v1")
 app.include_router(news.router, prefix="/api/v1")
+app.include_router(portfolio.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

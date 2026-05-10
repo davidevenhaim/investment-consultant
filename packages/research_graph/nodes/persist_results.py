@@ -81,15 +81,21 @@ def make_persist_results(
             # Persist personalized recommendation
             personalized_rec_id: uuid.UUID | None = None
             if personalized is not None and neutral_rec_id is not None:
+                import contextlib  # noqa: PLC0415
+                snap_id: uuid.UUID | None = None
+                if personalized.portfolio_snapshot_id:
+                    with contextlib.suppress(ValueError):
+                        snap_id = uuid.UUID(personalized.portfolio_snapshot_id)
                 pr = PersonalizedRecModel(
                     neutral_recommendation_id=neutral_rec_id,
                     symbol=symbol,
                     personal_action=personalized.personal_action.value,
-                    position_sizing_json={},
+                    position_sizing_json=personalized.suggested_trade_json or {},
                     policy_checks_json=personalized.policy_checks,
                     current_position_weight=personalized.current_position_weight,
                     max_allowed_weight=personalized.max_allowed_weight,
                     personal_reason=personalized.personal_reason,
+                    portfolio_snapshot_id=snap_id,
                 )
                 session.add(pr)
                 await session.flush()
@@ -170,6 +176,33 @@ def make_persist_results(
                     )
                     session.add(art_ev)
 
+                await session.flush()
+
+            # Persist PORTFOLIO_CONTEXT evidence row (when portfolio context exists)
+            port_ctx = state.get("portfolio_context")
+            if port_ctx is not None and neutral_rec_id is not None:
+                current_w = state.get("current_position_weight") or 0.0
+                target_w = state.get("target_position_weight")
+                cash_av = state.get("cash_available")
+                port_ev = RecommendationEvidence(
+                    recommendation_id=neutral_rec_id,
+                    recommendation_type="NEUTRAL",
+                    evidence_type=EvidenceType.PORTFOLIO_CONTEXT.value,
+                    source="manual_portfolio",
+                    summary=(
+                        f"Portfolio context: current weight {current_w:.1%}, "
+                        f"target weight {target_w:.1%}" if target_w is not None
+                        else f"Portfolio context: current weight {current_w:.1%}. "
+                        + (f"Cash available ${cash_av:,.0f}." if cash_av else "")
+                    ),
+                    payload_json={
+                        **{k: v for k, v in port_ctx.items() if k != "position"},
+                        "current_weight": current_w,
+                        "target_weight": target_w,
+                        "suggested_trade": state.get("suggested_trade_json"),
+                    },
+                )
+                session.add(port_ev)
                 await session.flush()
 
             # Update ticker status to COMPLETED

@@ -50,6 +50,7 @@ class EvidenceType(StrEnum):
     LLM_ANALYSIS = "LLM_ANALYSIS"
     NEWS_ANALYSIS = "NEWS_ANALYSIS"
     NEWS_ITEM = "NEWS_ITEM"
+    PORTFOLIO_CONTEXT = "PORTFOLIO_CONTEXT"
 
 
 class AssetType(StrEnum):
