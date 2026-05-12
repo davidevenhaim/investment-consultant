@@ -32,7 +32,8 @@ def make_load_portfolio_context(
                     symbol=symbol,
                     reason="no default portfolio account found",
                 )
-                return _safe_defaults()
+                # Still load trading stats even without a portfolio account
+                return await _load_trade_stats_only(state, session, symbol)
 
             pos = ctx.position
             logger.debug(
@@ -113,9 +114,13 @@ def make_load_portfolio_context(
                         "analysis_completeness_score": new_completeness,
                     }
                 )
-                # Remove "Portfolio context not available" from missing_details
+                # Remove portfolio-pending entries from missing_details and main_risks
                 new_missing_details = [
                     m for m in neutral.missing_details if "portfolio" not in m.lower()
+                ]
+                new_main_risks = [
+                    r for r in neutral.main_risks
+                    if "portfolio context pending" not in r.lower()
                 ]
                 new_neutral = NeutralRecState(
                     **{
@@ -124,6 +129,7 @@ def make_load_portfolio_context(
                         "action": new_action,
                         "score_breakdown": new_breakdown,
                         "missing_details": new_missing_details,
+                        "main_risks": new_main_risks,
                         "final_reason": _update_final_reason(
                             neutral.final_reason, pfit, new_total, new_action.value
                         ),
@@ -233,21 +239,75 @@ def _safe_defaults() -> dict[str, Any]:
     }
 
 
+async def _load_trade_stats_only(
+    state: "ResearchState",
+    session: AsyncSession,
+    symbol: str,
+) -> dict[str, Any]:
+    """Return safe defaults + trading stats when no portfolio account exists."""
+    import contextlib
+    import uuid as _uuid
+
+    raw_ba_id = state.get("broker_account_id")
+    ba_uuid: _uuid.UUID | None = None
+    if raw_ba_id:
+        with contextlib.suppress(ValueError):
+            ba_uuid = _uuid.UUID(raw_ba_id)
+
+    symbol_trading_stats: dict[str, Any] = {}
+    behavioral_flags: list[str] = []
+    try:
+        from portfolio.trade_history_service import (
+            get_latest_profile,
+            get_symbol_trading_stats,
+        )
+
+        symbol_trading_stats = await get_symbol_trading_stats(
+            session, symbol, broker_account_id=ba_uuid
+        )
+        latest_profile = await get_latest_profile(session, broker_account_id=ba_uuid)
+        if latest_profile:
+            behavioral_flags = list(latest_profile.behavioral_flags_json or [])
+    except Exception as trade_exc:
+        logger.debug(
+            "load_portfolio_context_trade_stats_failed",
+            symbol=symbol,
+            error=str(trade_exc),
+        )
+
+    return {
+        **_safe_defaults(),
+        "symbol_trading_stats": symbol_trading_stats or None,
+        "behavioral_flags": behavioral_flags,
+    }
+
+
 def _update_final_reason(
     original: str,
     pfit: float,
     new_total: int,
     new_action: str,
 ) -> str:
-    """Patch final_reason to reflect real portfolio fit score."""
+    """Patch final_reason to reflect updated total score, action, and real portfolio fit."""
+    import re
+
     reason = original
+
+    # Update leading score/action stamp (Score X/100 (ACTION))
+    reason = re.sub(
+        r"Score \d+/100 \([^)]+\)",
+        f"Score {new_total}/100 ({new_action})",
+        reason,
+    )
+
+    # Replace portfolio stub with real fit score
     if "Portfolio stub:" in reason:
-        import re
         reason = re.sub(
             r"Portfolio stub: \d+/15",
             f"Portfolio fit (real): {pfit:.0f}/15",
             reason,
         )
-    if "Portfolio stub:" not in reason and "Portfolio fit" not in reason:
+    elif "Portfolio fit" not in reason:
         reason += f" Portfolio fit (real): {pfit:.0f}/15."
+
     return reason

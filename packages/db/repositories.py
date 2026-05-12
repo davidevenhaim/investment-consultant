@@ -346,15 +346,18 @@ class RecommendationRepository:
     async def get_from_latest_run(
         self, symbols: list[str] | None = None
     ) -> list[NeutralRecommendation]:
-        """Return all neutral recommendations from the single most recent research run.
+        """Return all neutral recommendations from the single most recent COMPLETED research run.
 
+        Filters to COMPLETED runs only — FAILED/RUNNING runs are ignored even if newer.
         Scopes results to one run, preventing symbol bleed across runs.
         """
         from sqlalchemy import func as sqlfunc
 
-        # Find the research_run_id whose recs have the most recent as_of_time
+        # Find the research_run_id with most recent as_of_time, COMPLETED runs only
         latest_run_id_subq = (
             select(NeutralRecommendation.research_run_id)
+            .join(ResearchRun, ResearchRun.id == NeutralRecommendation.research_run_id)
+            .where(ResearchRun.status == ResearchRunStatus.COMPLETED.value)
             .group_by(NeutralRecommendation.research_run_id)
             .order_by(sqlfunc.max(NeutralRecommendation.as_of_time).desc())
             .limit(1)

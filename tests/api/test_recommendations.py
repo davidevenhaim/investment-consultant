@@ -254,7 +254,7 @@ async def test_personalized_symbol_trading_stats_populated_with_trade_history(
             "quantity": 10,
             "price": 150.0,
             # Use recent dates within the 12-month lookback window
-            "executed_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=180)).isoformat(),
+            "executed_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=180)).isoformat(),
             "source": "MANUAL",
         },
     )
@@ -265,7 +265,7 @@ async def test_personalized_symbol_trading_stats_populated_with_trade_history(
             "side": "SELL",
             "quantity": 10,
             "price": 180.0,
-            "executed_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat(),
+            "executed_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).isoformat(),
             "source": "MANUAL",
         },
     )
@@ -285,3 +285,204 @@ async def test_personalized_symbol_trading_stats_populated_with_trade_history(
         assert len(stats) > 0, (
             "symbol_trading_stats_json should be non-empty when trade history exists"
         )
+
+
+# ── Score / final_reason consistency tests ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_final_reason_score_matches_neutral_score(api_client: AsyncClient) -> None:
+    """neutral.score must match the score stated in neutral.final_reason."""
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    neutral = aapl["neutral"]
+    assert neutral is not None
+
+    import re
+
+    score = neutral["score"]
+    match = re.search(r"Score (\d+)/100", neutral["final_reason"])
+    assert match is not None, "final_reason must contain 'Score X/100'"
+    reason_score = int(match.group(1))
+    assert reason_score == score, (
+        f"final_reason says Score {reason_score}/100 but neutral.score={score}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_score_breakdown_total_score_matches_neutral_score(api_client: AsyncClient) -> None:
+    """score_breakdown_json.total_score must match neutral.score."""
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    neutral = aapl["neutral"]
+    assert neutral is not None
+
+    score = neutral["score"]
+    breakdown_total = neutral["score_breakdown_json"]["total_score"]
+    assert int(breakdown_total) == score, (
+        f"score_breakdown_json.total_score={breakdown_total} but neutral.score={score}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_final_reason_score_consistent_with_portfolio_context(
+    api_client: AsyncClient,
+) -> None:
+    """When portfolio context adjusts the score, final_reason must reflect the updated score."""
+    # Seed a portfolio position — ensures a PortfolioAccount exists so ctx != None
+    await api_client.post(
+        "/api/v1/portfolio/positions",
+        json={"symbol": "AAPL", "quantity": 5, "average_cost": 150.0},
+    )
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    neutral = aapl["neutral"]
+    assert neutral is not None
+
+    import re
+
+    score = neutral["score"]
+    match = re.search(r"Score (\d+)/100", neutral["final_reason"])
+    assert match is not None, "final_reason must contain 'Score X/100'"
+    reason_score = int(match.group(1))
+    assert reason_score == score, (
+        f"Portfolio-adjusted final_reason says Score {reason_score}/100 "
+        f"but neutral.score={score}"
+    )
+    # score_breakdown must also agree
+    assert int(neutral["score_breakdown_json"]["total_score"]) == score
+
+
+@pytest.mark.asyncio
+async def test_no_portfolio_pending_risk_when_portfolio_context_loaded(
+    api_client: AsyncClient,
+) -> None:
+    """'Portfolio context pending' must not appear in main_risks when portfolio context exists."""
+    # Seed a portfolio position so PortfolioAccount is created
+    await api_client.post(
+        "/api/v1/portfolio/positions",
+        json={"symbol": "AAPL", "quantity": 5, "average_cost": 150.0},
+    )
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    neutral = aapl["neutral"]
+    assert neutral is not None
+
+    risks = neutral["main_risks_json"]
+    portfolio_pending = [r for r in risks if "portfolio context pending" in r.lower()]
+    assert len(portfolio_pending) == 0, (
+        f"Portfolio context was loaded but 'Portfolio context pending' still in risks: {risks}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_portfolio_pending_risk_present_when_no_portfolio_context(
+    api_client: AsyncClient,
+) -> None:
+    """'Portfolio context pending' must appear in main_risks when no portfolio account exists."""
+    # No portfolio setup — default test env has no portfolio account
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    data = resp.json()["data"]
+    aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
+    assert aapl is not None
+    neutral = aapl["neutral"]
+    assert neutral is not None
+
+    risks = neutral["main_risks_json"]
+    portfolio_pending = [r for r in risks if "portfolio context pending" in r.lower()]
+    assert len(portfolio_pending) > 0, (
+        "No portfolio account exists but 'Portfolio context pending' missing from risks"
+    )
+
+
+# ── Latest run status-gating tests ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_latest_ignores_failed_and_running_runs(
+    api_client: AsyncClient,
+    db_session,
+) -> None:
+    """FAILED/RUNNING runs must not overshadow the latest COMPLETED run."""
+    import datetime as dt
+    import uuid as uuid_mod
+
+    from db.models import NeutralRecommendation as NeutralRec
+    from db.models import ResearchRun as RRun
+
+    # Create a completed run with AAPL
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+
+    # Directly inject a FAILED run with a newer as_of_time
+    failed_run_id = uuid_mod.uuid4()
+    failed_run = RRun(
+        id=failed_run_id,
+        run_type="MANUAL",
+        status="FAILED",
+        started_at=dt.datetime.now(dt.UTC),
+        finished_at=dt.datetime.now(dt.UTC),
+    )
+    db_session.add(failed_run)
+    await db_session.flush()
+
+    # Add a NeutralRecommendation for this failed run with newer as_of_time
+    failed_rec = NeutralRec(
+        id=uuid_mod.uuid4(),
+        research_run_id=failed_run_id,
+        symbol="MSFT",
+        action="HOLD",
+        score=60,
+        confidence=0.7,
+        as_of_time=dt.datetime.now(dt.UTC) + dt.timedelta(seconds=10),
+        final_reason="Score 60/100 (HOLD).",
+        score_breakdown_json={},
+        main_reasons_json=[],
+        main_risks_json=[],
+        missing_details_json=[],
+        what_changed_json=[],
+        price_at_recommendation=100.0,
+    )
+    db_session.add(failed_rec)
+    await db_session.flush()
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    assert resp.status_code == 200
+    symbols = {d["symbol"] for d in resp.json()["data"]}
+    assert "AAPL" in symbols, "AAPL from COMPLETED run must appear"
+    assert "MSFT" not in symbols, "MSFT from FAILED run must not appear in /latest"
+
+
+@pytest.mark.asyncio
+async def test_latest_completed_msft_only_excludes_older_symbols(
+    api_client: AsyncClient,
+) -> None:
+    """Latest completed run with only MSFT must exclude symbols from older runs."""
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL", "NVDA"]})
+    await api_client.post("/api/v1/research-runs", json={"symbols": ["MSFT"]})
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    symbols = {d["symbol"] for d in data}
+
+    assert "MSFT" in symbols, "MSFT from latest run must appear"
+    assert "AAPL" not in symbols, "AAPL from older run must not appear"
+    assert "NVDA" not in symbols, "NVDA from older run must not appear"
