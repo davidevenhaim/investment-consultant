@@ -154,7 +154,9 @@ class NewsItem(Base, UUIDMixin, TimestampMixin):
 
 class PortfolioAccount(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "portfolio_accounts"
+    __table_args__ = (Index("ix_portfolio_accounts_user_id", "user_id"),)
 
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     account_type: Mapped[str] = mapped_column(String(50), nullable=False, default="MANUAL")
     base_currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
@@ -394,8 +396,13 @@ class PromptVersion(Base, UUIDMixin, TimestampMixin):
 
 class WatchlistSymbol(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "watchlist_symbols"
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", name="uq_watchlist_user_symbol"),
+        Index("ix_watchlist_symbols_user_id", "user_id"),
+    )
 
-    symbol: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     company_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     exchange: Mapped[str | None] = mapped_column(String(20), nullable=True)
     asset_type: Mapped[str] = mapped_column(
@@ -407,7 +414,9 @@ class WatchlistSymbol(Base, UUIDMixin, TimestampMixin):
 
 class InvestorProfile(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "investor_profiles"
+    __table_args__ = (Index("ix_investor_profiles_user_id", "user_id"),)
 
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="default")
     risk_level: Mapped[str] = mapped_column(
         String(20), nullable=False, default=RiskLevel.MEDIUM.value
@@ -431,11 +440,13 @@ class InvestorProfile(Base, UUIDMixin, TimestampMixin):
 class ResearchRun(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "research_runs"
     __table_args__ = (
+        Index("ix_research_runs_user_id", "user_id"),
         Index("ix_research_runs_status", "status"),
         Index("ix_research_runs_run_type", "run_type"),
         Index("ix_research_runs_created_at", "created_at"),
     )
 
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     run_type: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default=ResearchRunStatus.CREATED.value

@@ -8,6 +8,8 @@ from db.session import get_db
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.dependencies.auth import CurrentUser, get_current_user
+
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 logger = get_logger(__name__)
 
@@ -16,9 +18,10 @@ logger = get_logger(__name__)
 async def list_watchlist(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = WatchlistRepository(db)
-    symbols = await repo.list_active()
+    symbols = await repo.list_active(user_id=current_user.user_id)
     return api_response(
         [WatchlistSymbolResponse.model_validate(s).model_dump() for s in symbols],
         request,
@@ -30,9 +33,10 @@ async def add_to_watchlist(
     body: WatchlistSymbolCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = WatchlistRepository(db)
-    existing = await repo.get_by_symbol(body.symbol)
+    existing = await repo.get_by_symbol(body.symbol, user_id=current_user.user_id)
     if existing:
         if existing.is_active:
             raise HTTPException(
@@ -47,6 +51,7 @@ async def add_to_watchlist(
 
     symbol = await repo.create(
         symbol=body.symbol,
+        user_id=current_user.user_id,
         company_name=body.company_name,
         exchange=body.exchange,
         asset_type=body.asset_type.value,
@@ -62,9 +67,10 @@ async def remove_from_watchlist(
     symbol: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = WatchlistRepository(db)
-    removed = await repo.deactivate(symbol)
+    removed = await repo.deactivate(symbol, user_id=current_user.user_id)
     if not removed:
         raise HTTPException(status_code=404, detail=f"{symbol.upper()} not found on watchlist")
     await db.commit()

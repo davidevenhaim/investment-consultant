@@ -64,6 +64,7 @@ def make_initial_state(
     return ResearchState(
         run_id=str(run.id),
         run_ticker_id=str(ticker.id),
+        user_id=str(run.user_id) if run.user_id is not None else None,
         symbol=ticker.symbol,
         as_of_time=datetime.now(UTC),
         strategy_version=strategy_version,

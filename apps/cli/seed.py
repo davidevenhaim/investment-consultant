@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +140,7 @@ _WATCHLIST: list[dict[str, str]] = [
     {"symbol": "NVDA", "company_name": "NVIDIA Corporation", "exchange": "NASDAQ"},
     {"symbol": "TSLA", "company_name": "Tesla, Inc.", "exchange": "NASDAQ"},
 ]
+_DEV_DEFAULT_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 async def seed() -> None:
@@ -216,20 +218,32 @@ async def seed() -> None:
             logger.info("seed_combined_analysis_prompt_exists", name=existing_ca.name)
 
         result = await session.execute(
-            select(InvestorProfile).where(InvestorProfile.name == "default").limit(1)
+            select(InvestorProfile)
+            .where(
+                InvestorProfile.name == "default",
+                InvestorProfile.user_id == _DEV_DEFAULT_USER_ID,
+            )
+            .limit(1)
         )
         if result.scalar_one_or_none() is None:
             ip_repo = InvestorProfileRepository(session)
-            await ip_repo.create(name="default", is_active=True)
+            await ip_repo.create(
+                user_id=_DEV_DEFAULT_USER_ID,
+                name="default",
+                is_active=True,
+            )
             logger.info("seed_investor_profile_created")
         else:
             logger.info("seed_investor_profile_exists")
 
         wl_repo = WatchlistRepository(session)
         for entry in _WATCHLIST:
-            existing = await wl_repo.get_by_symbol(entry["symbol"])
+            existing = await wl_repo.get_by_symbol(
+                entry["symbol"],
+                user_id=_DEV_DEFAULT_USER_ID,
+            )
             if existing is None:
-                ws = await wl_repo.create(**entry)
+                ws = await wl_repo.create(**entry, user_id=_DEV_DEFAULT_USER_ID)
                 logger.info("seed_watchlist_added", symbol=ws.symbol)
             else:
                 logger.info("seed_watchlist_exists", symbol=existing.symbol)
@@ -245,12 +259,13 @@ async def seed() -> None:
         )
 
         acc_repo = PortfolioAccountRepository(session)
-        account = await acc_repo.get_default()
+        account = await acc_repo.get_default(user_id=_DEV_DEFAULT_USER_ID)
         if account is None:
             account = await acc_repo.create(
                 name="Default Manual Portfolio",
                 account_type="MANUAL",
                 cash_balance=10000.0,
+                user_id=_DEV_DEFAULT_USER_ID,
             )
             logger.info("seed_portfolio_account_created", account_id=str(account.id))
         else:

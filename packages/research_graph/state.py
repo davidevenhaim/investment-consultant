@@ -121,6 +121,7 @@ class ResearchState(TypedDict):
     # ── run context ──────────────────────────────────────────────────────────
     run_id: str
     run_ticker_id: str  # UUID of the ResearchRunTicker DB record (M3 addition)
+    user_id: str | None
     symbol: str
     as_of_time: datetime
     strategy_version: str

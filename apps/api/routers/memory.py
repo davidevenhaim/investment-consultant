@@ -3,8 +3,10 @@
 from typing import Any
 
 from core.responses import api_response
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from memory.retriever import retrieve_symbol_memory
+
+from apps.api.dependencies.auth import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -14,8 +16,11 @@ async def get_symbol_memory(
     symbol: str,
     request: Request,
     limit: int = 5,
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Return ChromaDB research memory for a symbol."""
+    # TODO(M10.3): filter retrieval by current_user.user_id once Chroma metadata
+    # isolation is implemented end-to-end.
     ctx = await retrieve_symbol_memory(symbol.upper(), limit=limit)
     prev_rec = ctx.previous_recommendation or {}
     return api_response(
@@ -48,6 +53,7 @@ async def add_manual_note(
     request: Request,
     title: str = Body(...),
     content: str = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Index a manual research note to ChromaDB for a symbol."""
     from memory.collections import MANUAL_NOTES
@@ -57,7 +63,12 @@ async def add_manual_note(
     if not title.strip() or not content.strip():
         raise HTTPException(status_code=422, detail="title and content must not be empty")
 
-    doc = build_manual_note_document(symbol.upper(), title.strip(), content.strip())
+    doc = build_manual_note_document(
+        symbol.upper(),
+        title.strip(),
+        content.strip(),
+        extra_metadata={"user_id": str(current_user.user_id)},
+    )
     store = _get_default_store()
     try:
         await store.add_document(MANUAL_NOTES, doc)

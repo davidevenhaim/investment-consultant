@@ -20,9 +20,12 @@ from portfolio.schemas import PortfolioContext, PortfolioPositionContext
 logger = get_logger(__name__)
 
 
-async def ensure_default_portfolio(session: AsyncSession) -> PortfolioAccount:
+async def ensure_default_portfolio(
+    session: AsyncSession,
+    user_id: uuid.UUID | None = None,
+) -> PortfolioAccount:
     acc_repo = PortfolioAccountRepository(session)
-    return await acc_repo.get_or_create_default()
+    return await acc_repo.get_or_create_default(user_id=user_id)
 
 
 async def refresh_portfolio_prices(
@@ -90,13 +93,14 @@ async def build_portfolio_snapshot(
 async def get_portfolio_context_for_symbol(
     session: AsyncSession,
     symbol: str,
+    user_id: uuid.UUID | None = None,
 ) -> PortfolioContext | None:
     """
     Load portfolio context for a specific symbol.
     Returns None if no default portfolio exists.
     """
     acc_repo = PortfolioAccountRepository(session)
-    account = await acc_repo.get_default()
+    account = await acc_repo.get_default(user_id=user_id)
     if account is None:
         return None
 
@@ -107,7 +111,7 @@ async def get_portfolio_context_for_symbol(
     positions = await pos_repo.list_by_account(account.id)
     latest_snap = await snap_repo.latest(account.id)
 
-    profile = await ip_repo.get_default()
+    profile = await ip_repo.get_default(user_id=user_id)
     risk_level = profile.risk_level if profile else "MEDIUM"
     min_confidence = profile.min_confidence_to_buy if profile else 0.65
     max_weight = profile.max_single_stock_weight if profile else 0.15

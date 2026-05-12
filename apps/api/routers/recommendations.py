@@ -11,6 +11,8 @@ from db.session import get_db
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.dependencies.auth import CurrentUser, get_current_user
+
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
@@ -18,12 +20,13 @@ router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 async def latest_recommendations(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     rec_repo = RecommendationRepository(db)
     wl_repo = WatchlistRepository(db)
 
     # All recs from the single latest research run — prevents symbol bleed across runs
-    recs = await rec_repo.get_from_latest_run()
+    recs = await rec_repo.get_from_latest_run(user_id=current_user.user_id)
 
     if recs:
         neutral_ids = [r.id for r in recs]
@@ -44,7 +47,7 @@ async def latest_recommendations(
             )
     else:
         # No completed runs yet — return watchlist symbols with null recs
-        symbols = [s.symbol for s in await wl_repo.list_active()]
+        symbols = [s.symbol for s in await wl_repo.list_active(user_id=current_user.user_id)]
         result = [
             LatestRecommendationResponse(symbol=s, neutral=None, personalized=None).model_dump()
             for s in symbols

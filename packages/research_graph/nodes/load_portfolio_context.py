@@ -1,5 +1,6 @@
 """LoadPortfolioContext — load real portfolio data and update neutral rec with portfolio fit."""
 
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -23,7 +24,9 @@ def make_load_portfolio_context(
         try:
             from portfolio.service import get_portfolio_context_for_symbol
 
-            ctx = await get_portfolio_context_for_symbol(session, symbol)
+            raw_user_id = state.get("user_id")
+            user_id = uuid.UUID(raw_user_id) if raw_user_id is not None else None
+            ctx = await get_portfolio_context_for_symbol(session, symbol, user_id=user_id)
 
             # Debug: always log what was found before writing to state
             if ctx is None:

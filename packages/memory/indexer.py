@@ -143,20 +143,24 @@ def build_manual_note_document(
     symbol: str,
     title: str,
     content: str,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> MemoryDocument:
     now = datetime.now(UTC)
     doc_id = f"note_{symbol}_{uuid.uuid4().hex[:8]}"
+    metadata: dict[str, Any] = {
+        "symbol": symbol,
+        "document_type": "manual_note",
+        "title": title,
+        "created_at_ts": int(now.timestamp() * 1000),
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
     return MemoryDocument(
         id=doc_id,
         symbol=symbol,
         document_type="manual_note",
         title=title,
         content=content,
-        metadata={
-            "symbol": symbol,
-            "document_type": "manual_note",
-            "title": title,
-            "created_at_ts": int(now.timestamp() * 1000),
-        },
+        metadata=metadata,
         created_at=now,
     )

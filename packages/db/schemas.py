@@ -156,6 +156,37 @@ class LatestRecommendationResponse(BaseModel):
     personalized: PersonalizedRecommendationResponse | None = None
 
 
+class RecommendationEvidenceResponse(_OrmBase):
+    id: uuid.UUID
+    recommendation_id: uuid.UUID
+    recommendation_type: str
+    evidence_type: str
+    source: str | None
+    source_id: str | None
+    summary: str
+    url: str | None
+    published_at: datetime | None
+    payload_json: dict[str, Any]
+    created_at: datetime
+
+
+class RunRecommendationItem(BaseModel):
+    symbol: str
+    neutral: NeutralRecommendationResponse | None = None
+    personalized: PersonalizedRecommendationResponse | None = None
+    evidence: list[RecommendationEvidenceResponse] = []
+
+
+class ResearchRunRecommendationsResponse(BaseModel):
+    research_run_id: uuid.UUID
+    status: str
+    run_type: str
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    recommendations: list[RunRecommendationItem] = []
+
+
 # ── Portfolio ─────────────────────────────────────────────────────────────────
 
 
@@ -260,7 +291,6 @@ class BrokerAccountUpdate(BaseModel):
 
 class BrokerAccountResponse(_OrmBase):
     id: uuid.UUID
-    user_id: uuid.UUID | None
     provider: str
     display_name: str
     connection_mode: str

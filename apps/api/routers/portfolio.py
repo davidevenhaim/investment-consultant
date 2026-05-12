@@ -36,21 +36,30 @@ from portfolio.service import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.dependencies.auth import CurrentUser, get_current_user
+
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-async def _active_broker_account_id(db: AsyncSession) -> uuid.UUID | None:
+async def _active_broker_account_id(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+) -> uuid.UUID | None:
     """Return the active default broker account ID, or None if none exists."""
     ba_repo = BrokerAccountRepository(db)
-    account = await ba_repo.get_active_default()
+    account = await ba_repo.get_active_default(user_id=user_id)
     return account.id if account is not None else None
 
 
-async def _get_summary(db: AsyncSession, request: Request) -> dict[str, Any]:
-    account = await ensure_default_portfolio(db)
+async def _get_summary(
+    db: AsyncSession,
+    request: Request,
+    user_id: uuid.UUID,
+) -> dict[str, Any]:
+    account = await ensure_default_portfolio(db, user_id=user_id)
     pos_repo = PortfolioPositionRepository(db)
     snap_repo = PortfolioSnapshotRepository(db)
     positions = await pos_repo.list_by_account(account.id)
@@ -67,6 +76,7 @@ async def _get_summary(db: AsyncSession, request: Request) -> dict[str, Any]:
 async def _run_ibkr_sync(
     db: AsyncSession,
     request: Request,
+    user_id: uuid.UUID,
     broker_account_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Shared sync logic for /sync-ibkr and /broker-accounts/{id}/sync-ibkr.
@@ -88,14 +98,16 @@ async def _run_ibkr_sync(
     ba_repo = BrokerAccountRepository(db)
 
     if broker_account_id is not None:
-        broker_account = await ba_repo.get_by_id(broker_account_id)
+        broker_account = await ba_repo.get_by_id_for_user(broker_account_id, user_id)
         if broker_account is None:
             raise HTTPException(status_code=404, detail="Broker account not found.")
         client = IBKRClient.from_broker_account(broker_account)
     else:
-        broker_account = await ba_repo.ensure_dev_default()
+        # ensure_dev_default creates the account from current env vars (ibkr_host/port/client_id),
+        # so from_broker_account produces the same config as the old from_settings() path.
+        broker_account = await ba_repo.ensure_dev_default(user_id=user_id)
         await db.commit()
-        client = IBKRClient.from_settings()
+        client = IBKRClient.from_broker_account(broker_account)
 
     ba_id = broker_account.id
     ibkr_config = client.config  # IBKRConnectionConfig — safe to pass into thread
@@ -128,10 +140,11 @@ async def _run_ibkr_sync(
 async def get_portfolio(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    await ensure_default_portfolio(db)
+    await ensure_default_portfolio(db, user_id=current_user.user_id)
     await db.commit()
-    return await _get_summary(db, request)
+    return await _get_summary(db, request, current_user.user_id)
 
 
 @router.post("/positions")
@@ -139,8 +152,9 @@ async def upsert_position(
     body: PortfolioPositionCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    account = await ensure_default_portfolio(db)
+    account = await ensure_default_portfolio(db, user_id=current_user.user_id)
     pos_repo = PortfolioPositionRepository(db)
     await pos_repo.upsert_position(
         account_id=account.id,
@@ -151,7 +165,7 @@ async def upsert_position(
     await refresh_portfolio_prices(db, account.id)
     await build_portfolio_snapshot(db, account.id)
     await db.commit()
-    return await _get_summary(db, request)
+    return await _get_summary(db, request, current_user.user_id)
 
 
 @router.delete("/positions/{symbol}")
@@ -159,8 +173,9 @@ async def delete_position(
     symbol: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    account = await ensure_default_portfolio(db)
+    account = await ensure_default_portfolio(db, user_id=current_user.user_id)
     pos_repo = PortfolioPositionRepository(db)
     removed = await pos_repo.delete_position(account.id, symbol)
     if not removed:
@@ -174,12 +189,13 @@ async def delete_position(
 async def refresh_portfolio(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    account = await ensure_default_portfolio(db)
+    account = await ensure_default_portfolio(db, user_id=current_user.user_id)
     await refresh_portfolio_prices(db, account.id)
     await build_portfolio_snapshot(db, account.id)
     await db.commit()
-    return await _get_summary(db, request)
+    return await _get_summary(db, request, current_user.user_id)
 
 
 # ── M9.5: IBKR sync (global dev path) ────────────────────────────────────────
@@ -189,6 +205,7 @@ async def refresh_portfolio(
 async def sync_ibkr(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Sync IBKR executions via the default dev broker account.
 
@@ -200,7 +217,7 @@ async def sync_ibkr(
             status_code=503,
             detail="IBKR integration is disabled. Set IBKR_ENABLED=true to enable.",
         )
-    return await _run_ibkr_sync(db, request)
+    return await _run_ibkr_sync(db, request, user_id=current_user.user_id)
 
 
 # ── M9.5: Trading profile ─────────────────────────────────────────────────────
@@ -210,14 +227,13 @@ async def sync_ibkr(
 async def get_trading_profile(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = TradingProfileSnapshotRepository(db)
-    ba_id = await _active_broker_account_id(db)
-    snapshot = None
-    if ba_id is not None:
-        snapshot = await repo.latest(broker_account_id=ba_id)
-    if snapshot is None:
-        snapshot = await repo.latest()
+    ba_id = await _active_broker_account_id(db, current_user.user_id)
+    if ba_id is None:
+        raise HTTPException(status_code=404, detail="No trading profile found.")
+    snapshot = await repo.latest(broker_account_id=ba_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="No trading profile found.")
     return api_response(TradingProfileResponse.model_validate(snapshot).model_dump(), request)
@@ -227,10 +243,13 @@ async def get_trading_profile(
 async def rebuild_trading_profile(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     from portfolio.trade_history_service import build_and_save_profile
 
-    ba_id = await _active_broker_account_id(db)
+    ba_repo = BrokerAccountRepository(db)
+    broker_account = await ba_repo.ensure_dev_default(user_id=current_user.user_id)
+    ba_id = broker_account.id
     snapshot = await build_and_save_profile(db, broker_account_id=ba_id)
     await db.commit()
     return api_response(TradingProfileResponse.model_validate(snapshot).model_dump(), request)
@@ -241,10 +260,16 @@ async def get_symbol_trading_stats(
     symbol: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     from portfolio.trade_history_service import get_symbol_trading_stats as _get_stats
 
-    ba_id = await _active_broker_account_id(db)
+    ba_id = await _active_broker_account_id(db, current_user.user_id)
+    if ba_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No trade history found for {symbol.upper()}.",
+        )
     stats = await _get_stats(db, symbol.upper(), broker_account_id=ba_id)
     if not stats:
         raise HTTPException(
@@ -263,10 +288,13 @@ async def list_trades(
     symbol: str | None = Query(default=None),
     months: int = Query(default=12, ge=1, le=120),
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     from portfolio.trade_history_service import load_all_executions
 
-    ba_id = await _active_broker_account_id(db)
+    ba_id = await _active_broker_account_id(db, current_user.user_id)
+    if ba_id is None:
+        return api_response({"trades": [], "count": 0}, request)
     executions = await load_all_executions(
         db, months=months, symbol=symbol, broker_account_id=ba_id
     )
@@ -279,8 +307,11 @@ async def add_manual_trade(
     body: ManualTradeCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = ManualTradeRepository(db)
+    ba_repo = BrokerAccountRepository(db)
+    broker_account = await ba_repo.ensure_dev_default(user_id=current_user.user_id)
     row = await repo.create(
         symbol=body.symbol.upper(),
         side=body.side,
@@ -289,6 +320,7 @@ async def add_manual_trade(
         executed_at=body.executed_at,
         notes=body.notes,
         source=body.source,
+        broker_account_id=broker_account.id,
     )
     await db.commit()
     return api_response(ManualTradeResponse.model_validate(row).model_dump(), request)
@@ -301,9 +333,10 @@ async def add_manual_trade(
 async def list_broker_accounts(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = BrokerAccountRepository(db)
-    accounts = await repo.list_active()
+    accounts = await repo.list_active(user_id=current_user.user_id)
     return api_response(
         [BrokerAccountResponse.model_validate(a).model_dump() for a in accounts],
         request,
@@ -315,6 +348,7 @@ async def create_broker_account(
     body: BrokerAccountCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = BrokerAccountRepository(db)
     account = await repo.create(
@@ -326,6 +360,7 @@ async def create_broker_account(
         client_id=body.client_id,
         readonly=body.readonly,
         is_active=body.is_active,
+        user_id=current_user.user_id,
         external_account_id=body.external_account_id,
         metadata_json=body.metadata_json,
     )
@@ -338,9 +373,10 @@ async def get_broker_account(
     broker_account_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = BrokerAccountRepository(db)
-    account = await repo.get_by_id(broker_account_id)
+    account = await repo.get_by_id_for_user(broker_account_id, current_user.user_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Broker account not found.")
     return api_response(BrokerAccountResponse.model_validate(account).model_dump(), request)
@@ -352,9 +388,10 @@ async def update_broker_account(
     body: BrokerAccountUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     repo = BrokerAccountRepository(db)
-    existing = await repo.get_by_id(broker_account_id)
+    existing = await repo.get_by_id_for_user(broker_account_id, current_user.user_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Broker account not found.")
 
@@ -371,6 +408,7 @@ async def sync_ibkr_for_account(
     broker_account_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Sync IBKR executions for a specific broker account."""
     cfg = get_settings()
@@ -379,7 +417,12 @@ async def sync_ibkr_for_account(
             status_code=503,
             detail="IBKR integration is disabled. Set IBKR_ENABLED=true to enable.",
         )
-    return await _run_ibkr_sync(db, request, broker_account_id=broker_account_id)
+    return await _run_ibkr_sync(
+        db,
+        request,
+        user_id=current_user.user_id,
+        broker_account_id=broker_account_id,
+    )
 
 
 # ── M9.7: Flex Query sync ─────────────────────────────────────────────────────
@@ -421,6 +464,7 @@ def _get_flex_credentials(cfg: Any, broker_account: Any) -> tuple[str, str]:
 async def sync_flex_global(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Sync historical IBKR executions via Flex Query for the default dev account.
 
@@ -439,7 +483,7 @@ async def sync_flex_global(
     from db.repositories import BrokerAccountRepository  # noqa: PLC0415
 
     ba_repo = BrokerAccountRepository(db)
-    broker_account = await ba_repo.ensure_dev_default()
+    broker_account = await ba_repo.ensure_dev_default(user_id=current_user.user_id)
     await db.commit()
 
     token, query_id = _get_flex_credentials(cfg, broker_account)
@@ -471,6 +515,7 @@ async def sync_flex_for_account(
     broker_account_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Sync historical IBKR executions via Flex Query for a specific broker account."""
     cfg = get_settings()
@@ -486,7 +531,10 @@ async def sync_flex_for_account(
     from db.repositories import BrokerAccountRepository  # noqa: PLC0415
 
     ba_repo = BrokerAccountRepository(db)
-    broker_account = await ba_repo.get_by_id(broker_account_id)
+    broker_account = await ba_repo.get_by_id_for_user(
+        broker_account_id,
+        current_user.user_id,
+    )
     if broker_account is None:
         raise HTTPException(status_code=404, detail="Broker account not found.")
 

@@ -118,8 +118,8 @@ async def test_get_trading_profile_prefers_broker_scoped(api_client: Any) -> Non
 
 
 @pytest.mark.asyncio
-async def test_get_trading_profile_falls_back_to_global(api_client: Any) -> None:
-    """GET /trading-profile falls back to global snapshot when no broker-scoped one."""
+async def test_get_trading_profile_does_not_fall_back_to_global(api_client: Any) -> None:
+    """GET /trading-profile returns 404 instead of leaking a global snapshot."""
     ba_id = uuid.uuid4()
     global_snap = _make_snapshot_response(total_executions=2, broker_account_id=None)
 
@@ -145,14 +145,12 @@ async def test_get_trading_profile_falls_back_to_global(api_client: Any) -> None
     ):
         resp = await api_client.get("/api/v1/portfolio/trading-profile")
 
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data["total_executions"] == 2
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_get_trading_profile_no_broker_account_returns_global(api_client: Any) -> None:
-    """GET /trading-profile works when no broker account exists."""
+async def test_get_trading_profile_no_broker_account_returns_404(api_client: Any) -> None:
+    """GET /trading-profile returns 404 when no broker account exists."""
     global_snap = _make_snapshot_response(total_executions=5)
 
     with (
@@ -169,8 +167,7 @@ async def test_get_trading_profile_no_broker_account_returns_global(api_client: 
     ):
         resp = await api_client.get("/api/v1/portfolio/trading-profile")
 
-    assert resp.status_code == 200
-    assert resp.json()["data"]["total_executions"] == 5
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -255,13 +252,11 @@ async def test_trades_passes_broker_account_id(api_client: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_trades_no_broker_account_passes_none(api_client: Any) -> None:
-    """GET /trades passes broker_account_id=None when no active broker account."""
-    captured: dict = {}
-
-    async def mock_load(session, months=12, symbol=None, broker_account_id=None):
-        captured["broker_account_id"] = broker_account_id
-        return []
+async def test_trades_no_broker_account_returns_empty_without_global_read(
+    api_client: Any,
+) -> None:
+    """GET /trades returns empty without querying unscoped trade history."""
+    mock_load = AsyncMock(return_value=[])
 
     with (
         patch(
@@ -278,4 +273,5 @@ async def test_trades_no_broker_account_passes_none(api_client: Any) -> None:
         resp = await api_client.get("/api/v1/portfolio/trades")
 
     assert resp.status_code == 200
-    assert captured.get("broker_account_id") is None
+    assert resp.json()["data"] == {"trades": [], "count": 0}
+    mock_load.assert_not_called()

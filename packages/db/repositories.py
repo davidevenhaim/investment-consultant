@@ -23,6 +23,7 @@ from db.models import (
     PortfolioPosition,
     PortfolioSnapshot,
     PromptVersion,
+    RecommendationEvidence,
     ResearchRun,
     ResearchRunTicker,
     StrategyVersion,
@@ -129,33 +130,54 @@ class WatchlistRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def list_active(self) -> list[WatchlistSymbol]:
+    async def list_active(self, user_id: uuid.UUID | None = None) -> list[WatchlistSymbol]:
+        user_filter = (
+            WatchlistSymbol.user_id.is_(None)
+            if user_id is None
+            else WatchlistSymbol.user_id == user_id
+        )
         result = await self._s.execute(
             select(WatchlistSymbol)
-            .where(WatchlistSymbol.is_active.is_(True))
+            .where(WatchlistSymbol.is_active.is_(True), user_filter)
             .order_by(WatchlistSymbol.symbol)
         )
         return list(result.scalars().all())
 
-    async def list_all(self) -> list[WatchlistSymbol]:
-        result = await self._s.execute(select(WatchlistSymbol).order_by(WatchlistSymbol.symbol))
+    async def list_all(self, user_id: uuid.UUID | None = None) -> list[WatchlistSymbol]:
+        user_filter = (
+            WatchlistSymbol.user_id.is_(None)
+            if user_id is None
+            else WatchlistSymbol.user_id == user_id
+        )
+        result = await self._s.execute(
+            select(WatchlistSymbol).where(user_filter).order_by(WatchlistSymbol.symbol)
+        )
         return list(result.scalars().all())
 
-    async def get_by_symbol(self, symbol: str) -> WatchlistSymbol | None:
+    async def get_by_symbol(
+        self, symbol: str, user_id: uuid.UUID | None = None
+    ) -> WatchlistSymbol | None:
+        user_filter = (
+            WatchlistSymbol.user_id.is_(None)
+            if user_id is None
+            else WatchlistSymbol.user_id == user_id
+        )
         result = await self._s.execute(
-            select(WatchlistSymbol).where(WatchlistSymbol.symbol == symbol.upper())
+            select(WatchlistSymbol).where(WatchlistSymbol.symbol == symbol.upper(), user_filter)
         )
         return result.scalar_one_or_none()
 
     async def create(
         self,
         symbol: str,
+        user_id: uuid.UUID | None = None,
         company_name: str | None = None,
         exchange: str | None = None,
         asset_type: str = "EQUITY",
         notes: str | None = None,
     ) -> WatchlistSymbol:
         ws = WatchlistSymbol(
+            user_id=user_id,
             symbol=symbol.upper(),
             company_name=company_name,
             exchange=exchange,
@@ -167,9 +189,14 @@ class WatchlistRepository:
         await self._s.refresh(ws)
         return ws
 
-    async def deactivate(self, symbol: str) -> bool:
+    async def deactivate(self, symbol: str, user_id: uuid.UUID | None = None) -> bool:
+        user_filter = (
+            WatchlistSymbol.user_id.is_(None)
+            if user_id is None
+            else WatchlistSymbol.user_id == user_id
+        )
         result = await self._s.execute(
-            select(WatchlistSymbol).where(WatchlistSymbol.symbol == symbol.upper())
+            select(WatchlistSymbol).where(WatchlistSymbol.symbol == symbol.upper(), user_filter)
         )
         ws = result.scalar_one_or_none()
         if ws is None:
@@ -183,10 +210,15 @@ class InvestorProfileRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def get_default(self) -> InvestorProfile | None:
+    async def get_default(self, user_id: uuid.UUID | None = None) -> InvestorProfile | None:
+        user_filter = (
+            InvestorProfile.user_id.is_(None)
+            if user_id is None
+            else InvestorProfile.user_id == user_id
+        )
         result = await self._s.execute(
             select(InvestorProfile)
-            .where(InvestorProfile.is_active.is_(True))
+            .where(InvestorProfile.is_active.is_(True), user_filter)
             .order_by(InvestorProfile.created_at)
             .limit(1)
         )
@@ -224,8 +256,10 @@ class ResearchRunRepository:
         run_type: ResearchRunType,
         strategy_version_id: uuid.UUID | None = None,
         prompt_version_id: uuid.UUID | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> ResearchRun:
         run = ResearchRun(
+            user_id=user_id,
             run_type=run_type.value,
             status=ResearchRunStatus.CREATED.value,
             strategy_version_id=strategy_version_id,
@@ -251,17 +285,31 @@ class ResearchRunRepository:
             await self._s.refresh(t)
         return tickers
 
-    async def get_by_id(self, run_id: uuid.UUID) -> ResearchRun | None:
+    async def get_by_id(
+        self, run_id: uuid.UUID, user_id: uuid.UUID | None = None
+    ) -> ResearchRun | None:
+        user_filter = (
+            ResearchRun.user_id.is_(None) if user_id is None else ResearchRun.user_id == user_id
+        )
         result = await self._s.execute(
             select(ResearchRun)
             .options(selectinload(ResearchRun.tickers))
-            .where(ResearchRun.id == run_id)
+            .where(ResearchRun.id == run_id, user_filter)
         )
         return result.scalar_one_or_none()
 
-    async def list_recent(self, limit: int = 20, offset: int = 0) -> list[ResearchRun]:
+    async def list_recent(
+        self, limit: int = 20, offset: int = 0, user_id: uuid.UUID | None = None
+    ) -> list[ResearchRun]:
+        user_filter = (
+            ResearchRun.user_id.is_(None) if user_id is None else ResearchRun.user_id == user_id
+        )
         result = await self._s.execute(
-            select(ResearchRun).order_by(ResearchRun.created_at.desc()).limit(limit).offset(offset)
+            select(ResearchRun)
+            .where(user_filter)
+            .order_by(ResearchRun.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
         return list(result.scalars().all())
 
@@ -344,7 +392,9 @@ class RecommendationRepository:
         return list(result.scalars().all())
 
     async def get_from_latest_run(
-        self, symbols: list[str] | None = None
+        self,
+        symbols: list[str] | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> list[NeutralRecommendation]:
         """Return all neutral recommendations from the single most recent COMPLETED research run.
 
@@ -354,11 +404,15 @@ class RecommendationRepository:
         from sqlalchemy import func as sqlfunc
 
         # Find the research_run_id with most recent as_of_time, COMPLETED runs only
-        latest_run_id_subq = (
+        latest_run_id_query = (
             select(NeutralRecommendation.research_run_id)
             .join(ResearchRun, ResearchRun.id == NeutralRecommendation.research_run_id)
             .where(ResearchRun.status == ResearchRunStatus.COMPLETED.value)
-            .group_by(NeutralRecommendation.research_run_id)
+        )
+        if user_id is not None:
+            latest_run_id_query = latest_run_id_query.where(ResearchRun.user_id == user_id)
+        latest_run_id_subq = (
+            latest_run_id_query.group_by(NeutralRecommendation.research_run_id)
             .order_by(sqlfunc.max(NeutralRecommendation.as_of_time).desc())
             .limit(1)
             .scalar_subquery()
@@ -397,6 +451,35 @@ class RecommendationRepository:
         result = await self._s.execute(q)
         rows = result.scalars().all()
         return {r.neutral_recommendation_id: r for r in rows}
+
+    async def get_neutral_by_run_id(self, run_id: uuid.UUID) -> list[NeutralRecommendation]:
+        """Return all neutral recommendations for a specific research_run_id."""
+        q = (
+            select(NeutralRecommendation)
+            .where(NeutralRecommendation.research_run_id == run_id)
+            .order_by(NeutralRecommendation.symbol)
+        )
+        result = await self._s.execute(q)
+        return list(result.scalars().all())
+
+    async def get_evidence_by_neutral_ids(
+        self, neutral_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[RecommendationEvidence]]:
+        """Return NEUTRAL evidence rows grouped by recommendation_id."""
+        if not neutral_ids:
+            return {}
+        q = (
+            select(RecommendationEvidence)
+            .where(RecommendationEvidence.recommendation_id.in_(neutral_ids))
+            .where(RecommendationEvidence.recommendation_type == "NEUTRAL")
+            .order_by(RecommendationEvidence.created_at)
+        )
+        result = await self._s.execute(q)
+        rows = result.scalars().all()
+        out: dict[uuid.UUID, list[RecommendationEvidence]] = {}
+        for row in rows:
+            out.setdefault(row.recommendation_id, []).append(row)
+        return out
 
 
 class JobEventRepository:
@@ -481,18 +564,28 @@ class PortfolioAccountRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def get_active(self) -> list[PortfolioAccount]:
+    async def get_active(self, user_id: uuid.UUID | None = None) -> list[PortfolioAccount]:
+        user_filter = (
+            PortfolioAccount.user_id.is_(None)
+            if user_id is None
+            else PortfolioAccount.user_id == user_id
+        )
         result = await self._s.execute(
             select(PortfolioAccount)
-            .where(PortfolioAccount.is_active.is_(True))
+            .where(PortfolioAccount.is_active.is_(True), user_filter)
             .order_by(PortfolioAccount.created_at)
         )
         return list(result.scalars().all())
 
-    async def get_default(self) -> PortfolioAccount | None:
+    async def get_default(self, user_id: uuid.UUID | None = None) -> PortfolioAccount | None:
+        user_filter = (
+            PortfolioAccount.user_id.is_(None)
+            if user_id is None
+            else PortfolioAccount.user_id == user_id
+        )
         result = await self._s.execute(
             select(PortfolioAccount)
-            .where(PortfolioAccount.is_active.is_(True))
+            .where(PortfolioAccount.is_active.is_(True), user_filter)
             .order_by(PortfolioAccount.created_at)
             .limit(1)
         )
@@ -504,8 +597,10 @@ class PortfolioAccountRepository:
         account_type: str = "MANUAL",
         base_currency: str = "USD",
         cash_balance: float = 0.0,
+        user_id: uuid.UUID | None = None,
     ) -> PortfolioAccount:
         acc = PortfolioAccount(
+            user_id=user_id,
             name=name,
             account_type=account_type,
             base_currency=base_currency,
@@ -517,11 +612,15 @@ class PortfolioAccountRepository:
         await self._s.refresh(acc)
         return acc
 
-    async def get_or_create_default(self) -> PortfolioAccount:
-        existing = await self.get_default()
+    async def get_or_create_default(self, user_id: uuid.UUID | None = None) -> PortfolioAccount:
+        existing = await self.get_default(user_id=user_id)
         if existing is not None:
             return existing
-        return await self.create(name="Default Manual Portfolio", cash_balance=10000.0)
+        return await self.create(
+            name="Default Manual Portfolio",
+            cash_balance=10000.0,
+            user_id=user_id,
+        )
 
     async def update_cash(self, account_id: uuid.UUID, cash_balance: float) -> None:
         await self._s.execute(
@@ -911,6 +1010,17 @@ class BrokerAccountRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_user(
+        self, account_id: uuid.UUID, user_id: uuid.UUID
+    ) -> BrokerAccount | None:
+        result = await self._s.execute(
+            select(BrokerAccount).where(
+                BrokerAccount.id == account_id,
+                BrokerAccount.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list_active(
         self, user_id: uuid.UUID | None = None
     ) -> list[BrokerAccount]:
@@ -935,16 +1045,17 @@ class BrokerAccountRepository:
         result = await self._s.execute(q)
         return result.scalar_one_or_none()
 
-    async def ensure_dev_default(self) -> BrokerAccount:
+    async def ensure_dev_default(self, user_id: uuid.UUID | None = None) -> BrokerAccount:
         """Return the default dev account, creating it if absent."""
         from core.config import get_settings
 
-        existing = await self.get_active_default()
+        existing = await self.get_active_default(user_id=user_id)
         if existing is not None:
             return existing
 
         cfg = get_settings()
         account = BrokerAccount(
+            user_id=user_id,
             provider="IBKR",
             display_name="Dev Default (LOCAL_TWS)",
             connection_mode="LOCAL_TWS",
