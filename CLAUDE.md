@@ -646,7 +646,7 @@ When asked to build a milestone, always:
 
 ## Current project state
 
-> Last verified: M9.6 complete. Next: M9.7 — IBKR Flex Query historical trade import.
+> Last verified: M11 complete. Next: M11.1 — LLM-assisted learning events, or M12 outcome tracking improvements.
 
 ### Quality gate (verified before M9.7)
 - `make test` — passing
@@ -825,6 +825,70 @@ Endpoint flow:
 
 **Handoff format at M9.7 completion:**
 Provide: files added/modified, migration if any, how Flex Query works, required config fields, how normalized executions are stored, APIs added, tests added, manual verification commands, known limitations/TODOs.
+
+---
+
+### M11 — Backtesting + Learning Loop
+
+New tables: `recommendation_outcomes`, `learning_events`
+
+New packages:
+- `packages/backtesting/__init__.py`
+- `packages/backtesting/schemas.py` — `ForwardOutcome` dataclass
+- `packages/backtesting/service.py` — `compute_forward_outcome`, `measure_recommendation_outcome`, `measure_latest_recommendations`, `generate_learning_event_from_outcome`
+- `packages/backtesting/repository.py` — `RecommendationOutcomeRepository`, `LearningEventRepository`
+
+New Alembic migration: `g8h9i0j1k2l3_add_backtesting_tables.py`
+
+APIs added:
+```
+POST /api/v1/backtesting/outcomes/measure-latest
+GET  /api/v1/backtesting/outcomes
+GET  /api/v1/backtesting/learning-events
+POST /api/v1/backtesting/learning-events/{id}/review
+```
+
+Design:
+- All outcome logic is deterministic (no LLM in M11)
+- `compute_forward_outcome` returns `INSUFFICIENT_DATA` — never raises — when bars are sparse
+- Outcomes are unique on `(recommendation_type, recommendation_id, horizon_days, benchmark_symbol)` — idempotent re-measurement
+- Learning events are rule-based: BUY→LOSS, HOLD→MISSED_UPSIDE, REDUCE→MISSED_UPSIDE, big drawdown
+- All endpoints are user-scoped via `CurrentUser`
+- Uses existing `MarketPriceRepository.get_bars()` for price data
+
+Outcome label rules:
+```
+BUY_CANDIDATE / STRONG_BUY:
+  +3% return or positive relative return  → WIN
+  -3% return or -5% relative             → LOSS
+  otherwise                               → NEUTRAL
+
+HOLD:
+  +10% forward return                     → MISSED_UPSIDE
+  -3% forward return                      → LOSS
+  otherwise                               → NEUTRAL
+
+REDUCE / SELL / NO_ACTION:
+  -5% forward return                      → AVOIDED_LOSS
+  +10% forward return                     → MISSED_UPSIDE
+  otherwise                               → NEUTRAL
+```
+
+Tests added:
+- `tests/backtesting/test_outcome_service.py` — 21 tests (pure compute + DB-bound)
+- `tests/api/test_backtesting.py` — 12 tests (API isolation, idempotency, user scoping)
+
+Quality gate (M11):
+- `make test` — 563 passed
+- `make test-integration` — 4 passed
+- `make lint` — ruff + mypy clean
+
+Known limitations / M11.1 follow-ups:
+- No LLM analysis of learning events yet — all rule-based
+- No personalized recommendation outcome measurement (only NEUTRAL for now)
+- `min_bar_fraction` threshold is approximate — can be tuned per horizon
+- No outcome aggregation endpoints (win rate summary, by symbol, by action) yet
+- `benchmark_symbol` defaults to SPY but no SPY bars in seed data — benchmark fields may be null
 
 ---
 

@@ -52,6 +52,8 @@ __all__ = [
     "RecommendationEvidence",
     "JobEvent",
     "AuditLog",
+    "RecommendationOutcome",
+    "LearningEvent",
 ]
 
 
@@ -717,3 +719,100 @@ class MemoryIndexEvent(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(
         PGTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+# ── M11: Backtesting + Learning Loop ─────────────────────────────────────────
+
+
+class RecommendationOutcome(Base, UUIDMixin, TimestampMixin):
+    """Forward outcome measured for a neutral or personalized recommendation."""
+
+    __tablename__ = "recommendation_outcomes"
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_type",
+            "recommendation_id",
+            "horizon_days",
+            "benchmark_symbol",
+            name="uq_outcome_rec_horizon_benchmark",
+        ),
+        Index("ix_outcome_user_id", "user_id"),
+        Index("ix_outcome_symbol", "symbol"),
+        Index("ix_outcome_research_run_id", "research_run_id"),
+        Index("ix_outcome_rec_type_id", "recommendation_type", "recommendation_id"),
+        Index("ix_outcome_measured_to", "measured_to"),
+        Index("ix_outcome_status", "outcome_status"),
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    recommendation_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    research_run_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_at_recommendation: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    measured_from: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    measured_to: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    benchmark_symbol: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, default="SPY", server_default=text("'SPY'")
+    )
+    start_price: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    end_price: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    benchmark_start_price: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    benchmark_end_price: Mapped[float | None] = mapped_column(Numeric(15, 4), nullable=True)
+    forward_return_pct: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    benchmark_return_pct: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    relative_return_pct: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    max_drawdown_pct: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    max_runup_pct: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    # PENDING | MEASURED | INSUFFICIENT_DATA | ERROR
+    outcome_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    # WIN | LOSS | NEUTRAL | AVOIDED_LOSS | MISSED_UPSIDE | UNKNOWN
+    outcome_label: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+
+class LearningEvent(Base, UUIDMixin, TimestampMixin):
+    """Rule-generated lesson from a bad call, missed upside, or scoring/data failure."""
+
+    __tablename__ = "learning_events"
+    __table_args__ = (
+        Index("ix_learning_user_id", "user_id"),
+        Index("ix_learning_symbol", "symbol"),
+        Index("ix_learning_event_type", "event_type"),
+        Index("ix_learning_status", "status"),
+        Index("ix_learning_research_run_id", "research_run_id"),
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    recommendation_outcome_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("recommendation_outcomes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    research_run_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    # UNDERPERFORMED_AFTER_BUY | MISSED_UPSIDE_AFTER_HOLD | AVOIDED_LOSS_AFTER_REDUCE
+    # STOP_LOSS_LIKE_DRAWDOWN | DATA_QUALITY_ISSUE | THESIS_BROKEN
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    # LOW | MEDIUM | HIGH
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    suspected_causes_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    suggested_adjustments_json: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # OPEN | REVIEWED | DISMISSED | APPLIED
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="OPEN")
+
+    outcome: Mapped["RecommendationOutcome | None"] = relationship("RecommendationOutcome")

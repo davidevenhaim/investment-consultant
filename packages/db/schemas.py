@@ -372,3 +372,60 @@ class TradingProfileResponse(_OrmBase):
 class IBKRSyncResponse(BaseModel):
     inserted: int
     message: str
+
+
+# ── Backtesting (M11) ─────────────────────────────────────────────────────────
+
+
+class RecommendationOutcomeResponse(_OrmBase):
+    id: uuid.UUID
+    recommendation_type: str
+    recommendation_id: uuid.UUID
+    research_run_id: uuid.UUID | None
+    symbol: str
+    action: str
+    score: int | None
+    price_at_recommendation: float | None
+    measured_from: datetime
+    measured_to: datetime
+    horizon_days: int
+    benchmark_symbol: str | None
+    start_price: float | None
+    end_price: float | None
+    benchmark_start_price: float | None
+    benchmark_end_price: float | None
+    forward_return_pct: float | None
+    benchmark_return_pct: float | None
+    relative_return_pct: float | None
+    max_drawdown_pct: float | None
+    max_runup_pct: float | None
+    outcome_status: str
+    outcome_label: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LearningEventResponse(_OrmBase):
+    id: uuid.UUID
+    recommendation_outcome_id: uuid.UUID | None
+    research_run_id: uuid.UUID | None
+    symbol: str
+    event_type: str
+    severity: str
+    title: str
+    summary: str
+    suspected_causes_json: list[Any]
+    evidence_json: dict[str, Any]
+    suggested_adjustments_json: list[Any]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeasureOutcomesRequest(BaseModel):
+    horizon_days: int = Field(default=30, ge=1, le=365)
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=20)
+
+
+class LearningEventStatusUpdate(BaseModel):
+    status: Literal["REVIEWED", "DISMISSED", "APPLIED"]
