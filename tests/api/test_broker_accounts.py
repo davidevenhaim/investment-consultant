@@ -202,6 +202,42 @@ async def test_list_shows_created_account(api_client: AsyncClient) -> None:
     assert "List Test Account" in names
 
 
+@pytest.mark.asyncio
+async def test_sync_flex_creates_visible_dev_default_account(
+    api_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IBKR_FLEX_ENABLED", "true")
+    monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "test-query")
+    from core.config import get_settings
+
+    get_settings.cache_clear()
+
+    async def fake_sync(db, broker_account_id, token, query_id):
+        return {
+            "fetched": 0,
+            "inserted": 0,
+            "profile_snapshot_id": "00000000-0000-0000-0000-000000000001",
+        }
+
+    monkeypatch.setattr(
+        "portfolio.trade_history_service.sync_ibkr_flex_executions",
+        fake_sync,
+    )
+
+    sync_resp = await api_client.post("/api/v1/portfolio/sync-flex")
+    assert sync_resp.status_code == 200
+
+    list_resp = await api_client.get("/api/v1/portfolio/broker-accounts")
+    assert list_resp.status_code == 200
+    accounts = list_resp.json()["data"]
+    assert len(accounts) == 1
+    assert accounts[0]["display_name"] == "Dev Default (LOCAL_TWS)"
+
+    get_settings.cache_clear()
+
+
 # ── Isolated sync path (IBKR_ENABLED=true) ───────────────────────────────────
 
 

@@ -211,3 +211,40 @@ async def test_flex_sync_marks_failure_on_flex_error(
     ba_repo.mark_sync_failure.assert_called_once()
     call_args = ba_repo.mark_sync_failure.call_args
     assert call_args[0][0] == ba_id
+
+
+@pytest.mark.asyncio
+async def test_flex_sync_repeated_same_broker_is_idempotent(
+    db_session,
+) -> None:
+    from db.models import BrokerAccount
+    from portfolio.trade_history_service import sync_ibkr_flex_executions
+
+    broker_account = BrokerAccount(
+        provider="IBKR",
+        display_name="Flex Idempotency Broker",
+        connection_mode="LOCAL_TWS",
+        client_id=1,
+        readonly=True,
+        is_active=True,
+        metadata_json={},
+    )
+    db_session.add(broker_account)
+    await db_session.flush()
+
+    flex_mock = AsyncMock()
+    flex_mock.fetch_statement = AsyncMock(return_value=VALID_XML)
+
+    with patch("portfolio.trade_history_service.FlexClient") as flex_cls:
+        flex_cls.from_settings.return_value = flex_mock
+        first = await sync_ibkr_flex_executions(
+            db_session, broker_account.id, "tok", "qid"
+        )
+        second = await sync_ibkr_flex_executions(
+            db_session, broker_account.id, "tok", "qid"
+        )
+
+    assert first["fetched"] == 1
+    assert first["inserted"] == 1
+    assert second["fetched"] == 1
+    assert second["inserted"] == 0

@@ -10,6 +10,7 @@ import pytest
 from broker.ibkr.fake_client import _FAKE_EXECUTIONS, FakeIBKRClient
 from broker.ibkr.schemas import IBKRExecution
 from portfolio.trade_history_service import sync_ibkr_executions
+from sqlalchemy.exc import IntegrityError
 
 
 def _make_exec(exec_id: str, symbol: str, side: str, qty: float, price: float, days_ago: int) -> IBKRExecution:
@@ -142,6 +143,33 @@ class TestSyncIBKRExecutions:
         await sync_ibkr_executions(session, execs, broker_account_id=ba_id)
 
         ba_repo_mock.mark_sync_success.assert_called_once_with(ba_id)
+
+    @pytest.mark.asyncio
+    async def test_rolls_back_before_marking_failure_on_integrity_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = AsyncMock()
+        ba_id = uuid.UUID("00000000-0000-0000-0000-000000000004")
+
+        import portfolio.trade_history_service as svc
+
+        repo_mock = AsyncMock()
+        repo_mock.exists_by_exec_id.return_value = False
+        repo_mock.create.side_effect = IntegrityError("insert", {}, Exception("duplicate"))
+
+        ba_repo_mock = _make_ba_repo_mock()
+        monkeypatch.setattr(svc, "IBKRExecutionRepository", lambda s: repo_mock)
+        monkeypatch.setattr(svc, "BrokerAccountRepository", lambda s: ba_repo_mock)
+
+        with pytest.raises(IntegrityError):
+            await sync_ibkr_executions(
+                session,
+                [_make_exec("e1", "AAPL", "BUY", 10, 100, 0)],
+                broker_account_id=ba_id,
+            )
+
+        session.rollback.assert_awaited_once()
+        ba_repo_mock.mark_sync_failure.assert_awaited_once()
 
 
 class TestFakeIBKRClient:

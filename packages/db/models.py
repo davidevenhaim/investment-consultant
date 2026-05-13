@@ -267,7 +267,11 @@ class BrokerAccount(Base, UUIDMixin, TimestampMixin):
 class IBKRExecution(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "ibkr_executions"
     __table_args__ = (
-        UniqueConstraint("exec_id", name="uq_ibkr_exec_id"),
+        UniqueConstraint(
+            "broker_account_id",
+            "exec_id",
+            name="uq_ibkr_executions_broker_exec_id",
+        ),
         Index("ix_ibkr_executions_symbol", "symbol"),
         Index("ix_ibkr_executions_executed_at", "executed_at"),
         Index("ix_ibkr_executions_symbol_date", "symbol", "executed_at"),

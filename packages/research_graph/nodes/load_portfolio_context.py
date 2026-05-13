@@ -218,7 +218,7 @@ def make_load_portfolio_context(
                 "completed_components": completed,
                 "missing_components": missing,
                 "analysis_completeness": round(state_completeness, 3),
-                "symbol_trading_stats": symbol_trading_stats or None,
+                "symbol_trading_stats": symbol_trading_stats or {},
                 "behavioral_flags": behavioral_flags,
             }
 
@@ -237,7 +237,7 @@ def _safe_defaults() -> dict[str, Any]:
         "current_position_value": None,
         "current_quantity": 0.0,
         "cash_available": None,
-        "symbol_trading_stats": None,
+        "symbol_trading_stats": {},
         "behavioral_flags": [],
     }
 
@@ -280,7 +280,7 @@ async def _load_trade_stats_only(
 
     return {
         **_safe_defaults(),
-        "symbol_trading_stats": symbol_trading_stats or None,
+        "symbol_trading_stats": symbol_trading_stats or {},
         "behavioral_flags": behavioral_flags,
     }
 

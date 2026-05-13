@@ -5,6 +5,7 @@ from core.logging import get_logger
 from core.responses import api_response
 from db.enums import ResearchRunStatus
 from db.repositories import (
+    BrokerAccountRepository,
     RecommendationRepository,
     ResearchRunRepository,
     StrategyVersionRepository,
@@ -75,9 +76,19 @@ async def create_research_run(
 
     logger.info("research_run_started", run_id=str(run.id), symbols=symbols)
 
+    ba_repo = BrokerAccountRepository(db)
+    broker_account = await ba_repo.get_active_default(user_id=current_user.user_id)
+    broker_account_id = broker_account.id if broker_account is not None else None
+
     # 4. Execute research graph for every ticker
     try:
-        summary = await run_research_for_run(loaded_run, tickers, db, strategy_version)
+        summary = await run_research_for_run(
+            loaded_run,
+            tickers,
+            db,
+            strategy_version,
+            broker_account_id=broker_account_id,
+        )
         final_status = (
             ResearchRunStatus.COMPLETED
             if not summary["symbols_failed"]

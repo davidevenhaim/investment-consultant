@@ -4,6 +4,7 @@ from datetime import UTC
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -136,3 +137,93 @@ async def test_neutral_recommendation_score_validation_via_check(db_session: Asy
 
     with pytest.raises(IntegrityError):
         await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_ibkr_execution_same_exec_id_allowed_across_broker_accounts(
+    db_session: AsyncSession,
+) -> None:
+    import datetime as dt
+
+    from db.models import BrokerAccount, IBKRExecution
+
+    ba1 = BrokerAccount(
+        provider="IBKR",
+        display_name="Broker A",
+        connection_mode="LOCAL_TWS",
+        client_id=1,
+        readonly=True,
+        is_active=True,
+        metadata_json={},
+    )
+    ba2 = BrokerAccount(
+        provider="IBKR",
+        display_name="Broker B",
+        connection_mode="LOCAL_TWS",
+        client_id=2,
+        readonly=True,
+        is_active=True,
+        metadata_json={},
+    )
+    db_session.add_all([ba1, ba2])
+    await db_session.flush()
+
+    common = {
+        "account_id_ibkr": "DU999",
+        "exec_id": "same-exec-id",
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 1,
+        "price": 100,
+        "currency": "USD",
+        "executed_at": dt.datetime.now(dt.UTC),
+        "raw_json": {},
+    }
+    db_session.add_all(
+        [
+            IBKRExecution(broker_account_id=ba1.id, **common),
+            IBKRExecution(broker_account_id=ba2.id, **common),
+        ]
+    )
+    await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_ibkr_execution_same_exec_id_rejected_within_broker_account(
+    db_session: AsyncSession,
+) -> None:
+    import datetime as dt
+
+    from db.models import BrokerAccount, IBKRExecution
+
+    ba = BrokerAccount(
+        provider="IBKR",
+        display_name="Broker A",
+        connection_mode="LOCAL_TWS",
+        client_id=1,
+        readonly=True,
+        is_active=True,
+        metadata_json={},
+    )
+    db_session.add(ba)
+    await db_session.flush()
+
+    common = {
+        "broker_account_id": ba.id,
+        "account_id_ibkr": "DU999",
+        "exec_id": "same-exec-id",
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 1,
+        "price": 100,
+        "currency": "USD",
+        "executed_at": dt.datetime.now(dt.UTC),
+        "raw_json": {},
+    }
+    db_session.add(IBKRExecution(**common))
+    await db_session.flush()
+
+    with pytest.raises(IntegrityError):
+        async with db_session.begin_nested():
+            db_session.add(IBKRExecution(**common))
+            await db_session.flush()

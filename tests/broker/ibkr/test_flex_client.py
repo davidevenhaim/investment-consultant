@@ -192,6 +192,44 @@ async def test_request_statement_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_statement_logs_redacted_token(caplog: pytest.LogCaptureFixture) -> None:
+    client = _make_client()
+    raw_token = "super-secret-flex-token"
+    xml_response = textwrap.dedent(f"""\
+        <FlexStatementResponse>
+          <Status>Success</Status>
+          <ReferenceCode>1234567890</ReferenceCode>
+          <Url>https://gdcdyn.test/GetStatement?t={raw_token}&amp;q=1234567890&amp;v=3</Url>
+        </FlexStatementResponse>
+    """)
+
+    mock_resp = MagicMock()
+    mock_resp.text = xml_response
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "text/xml"}
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("broker.ibkr.flex_client.httpx.AsyncClient") as mock_client_cls:
+        mock_ctx = AsyncMock()
+        mock_ctx.get = AsyncMock(return_value=mock_resp)
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with caplog.at_level("INFO", logger="broker.ibkr.flex_client"):
+            await client.request_statement(raw_token, "qid")
+
+    assert raw_token not in caplog.text
+    urls = [
+        getattr(record, "get_statement_url", "")
+        for record in caplog.records
+        if hasattr(record, "get_statement_url")
+    ]
+    assert any("[REDACTED]" in url for url in urls)
+    assert all(raw_token not in url for url in urls)
+    assert raw_token not in client.debug_info.send_request_url_redacted
+
+
+@pytest.mark.asyncio
 async def test_request_statement_uses_fallback_url_when_no_url_in_xml() -> None:
     client = _make_client()
     xml_response = textwrap.dedent("""\

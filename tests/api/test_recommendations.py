@@ -272,19 +272,122 @@ async def test_personalized_symbol_trading_stats_populated_with_trade_history(
     await api_client.post("/api/v1/portfolio/trading-profile/rebuild")
 
     # Run research for AAPL
-    await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+    run_resp = await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+    run_id = run_resp.json()["data"]["id"]
 
     resp = await api_client.get("/api/v1/recommendations/latest")
     data = resp.json()["data"]
     aapl = next((d for d in data if d["symbol"] == "AAPL"), None)
     assert aapl is not None
-    if aapl["personalized"] is not None:
-        stats = aapl["personalized"]["symbol_trading_stats_json"]
-        assert isinstance(stats, dict)
-        # Should have at least one completed trade → non-empty stats
-        assert len(stats) > 0, (
-            "symbol_trading_stats_json should be non-empty when trade history exists"
-        )
+    assert aapl["personalized"] is not None
+    stats = aapl["personalized"]["symbol_trading_stats_json"]
+    assert isinstance(stats, dict)
+    # Should have at least one completed trade → non-empty stats
+    assert len(stats) > 0, (
+        "symbol_trading_stats_json should be non-empty when trade history exists"
+    )
+    assert stats["executions"] == 2
+    assert stats["completed_trades"] == 1
+    assert stats["win_rate"] == pytest.approx(1.0)
+
+    run_recs = await api_client.get(f"/api/v1/research-runs/{run_id}/recommendations")
+    run_aapl = next(
+        item for item in run_recs.json()["data"]["recommendations"]
+        if item["symbol"] == "AAPL"
+    )
+    assert run_aapl["personalized"]["symbol_trading_stats_json"] == stats
+
+
+@pytest.mark.asyncio
+async def test_symbol_trading_stats_do_not_leak_across_users(
+    api_client: AsyncClient,
+) -> None:
+    """User B must not see User A's broker-scoped AAPL trading stats."""
+    import datetime as dt
+    import uuid
+
+    headers_a = {"X-User-Id": str(uuid.UUID("10000000-0000-0000-0000-000000000001"))}
+    headers_b = {"X-User-Id": str(uuid.UUID("20000000-0000-0000-0000-000000000002"))}
+
+    await api_client.post(
+        "/api/v1/portfolio/trades",
+        json={
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": 10,
+            "price": 150.0,
+            "executed_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=180)).isoformat(),
+            "source": "MANUAL",
+        },
+        headers=headers_a,
+    )
+    await api_client.post(
+        "/api/v1/portfolio/trades",
+        json={
+            "symbol": "AAPL",
+            "side": "SELL",
+            "quantity": 10,
+            "price": 180.0,
+            "executed_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).isoformat(),
+            "source": "MANUAL",
+        },
+        headers=headers_a,
+    )
+    await api_client.post("/api/v1/portfolio/trading-profile/rebuild", headers=headers_a)
+
+    await api_client.post(
+        "/api/v1/portfolio/broker-accounts",
+        json={"display_name": "User B Broker"},
+        headers=headers_b,
+    )
+    run_b = await api_client.post(
+        "/api/v1/research-runs",
+        json={"symbols": ["AAPL"]},
+        headers=headers_b,
+    )
+    run_b_id = run_b.json()["data"]["id"]
+
+    latest_b = await api_client.get("/api/v1/recommendations/latest", headers=headers_b)
+    aapl_b = next(item for item in latest_b.json()["data"] if item["symbol"] == "AAPL")
+    assert aapl_b["personalized"]["symbol_trading_stats_json"] == {}
+
+    run_recs_b = await api_client.get(
+        f"/api/v1/research-runs/{run_b_id}/recommendations",
+        headers=headers_b,
+    )
+    run_aapl_b = next(
+        item for item in run_recs_b.json()["data"]["recommendations"]
+        if item["symbol"] == "AAPL"
+    )
+    assert run_aapl_b["personalized"]["symbol_trading_stats_json"] == {}
+
+
+@pytest.mark.asyncio
+async def test_symbol_trading_stats_empty_without_completed_pair(
+    api_client: AsyncClient,
+) -> None:
+    """Open-only trade history for a symbol persists an empty stats dict."""
+    import datetime as dt
+
+    await api_client.post(
+        "/api/v1/portfolio/trades",
+        json={
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": 10,
+            "price": 150.0,
+            "executed_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).isoformat(),
+            "source": "MANUAL",
+        },
+    )
+    await api_client.post("/api/v1/portfolio/trading-profile/rebuild")
+
+    run_resp = await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+    assert run_resp.status_code == 201
+
+    resp = await api_client.get("/api/v1/recommendations/latest")
+    aapl = next(item for item in resp.json()["data"] if item["symbol"] == "AAPL")
+    assert aapl["personalized"]["symbol_trading_stats_json"] == {}
 
 
 # ── Score / final_reason consistency tests ────────────────────────────────────

@@ -1,5 +1,6 @@
 """Runner — orchestrates the graph for a full research run (all tickers)."""
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -59,6 +60,7 @@ def make_initial_state(
     ticker: ResearchRunTicker,
     strategy_version: str,
     strategy_config: dict[str, Any] | None = None,
+    broker_account_id: uuid.UUID | str | None = None,
 ) -> ResearchState:
     """Build the initial state for one ticker in a research run."""
     return ResearchState(
@@ -84,7 +86,7 @@ def make_initial_state(
         news_items=[],
         news_score_result=None,
         news_analysis=None,
-        broker_account_id=None,
+        broker_account_id=str(broker_account_id) if broker_account_id is not None else None,
         portfolio_context=None,
         portfolio_snapshot_id=None,
         current_position_weight=0.0,
@@ -125,6 +127,7 @@ async def run_research_for_run(
     memory_store: MemoryStore | None = None,
     llm_client: LLMClient | None = None,
     news_provider: NewsProvider | None = None,
+    broker_account_id: uuid.UUID | str | None = None,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
@@ -154,7 +157,13 @@ async def run_research_for_run(
         logger.info("research_ticker_start", symbol=symbol, run_id=str(run.id))
 
         try:
-            initial_state = make_initial_state(run, ticker, strategy_version, strategy_config)
+            initial_state = make_initial_state(
+                run,
+                ticker,
+                strategy_version,
+                strategy_config,
+                broker_account_id=broker_account_id,
+            )
             final_state: ResearchState = await graph.ainvoke(initial_state)
 
             node_errors: list[str] = final_state.get("errors", [])

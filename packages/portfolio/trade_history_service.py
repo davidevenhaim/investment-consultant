@@ -16,6 +16,7 @@ from db.repositories import (
     ManualTradeRepository,
     TradingProfileSnapshotRepository,
 )
+from sqlalchemy.exc import IntegrityError
 
 from portfolio.trading_profile import build_trading_profile
 
@@ -55,6 +56,11 @@ async def sync_ibkr_executions(
                 "broker_account_id": str(broker_account_id) if broker_account_id else None,
             },
         )
+    except IntegrityError as exc:
+        await session.rollback()
+        if broker_account_id is not None:
+            await ba_repo.mark_sync_failure(broker_account_id, str(exc))
+        raise
     except Exception as exc:
         if broker_account_id is not None:
             await ba_repo.mark_sync_failure(broker_account_id, str(exc))
@@ -228,6 +234,10 @@ async def sync_ibkr_flex_executions(
         snapshot = await build_and_save_profile(session, broker_account_id=broker_account_id)
         profile_snapshot_id = str(snapshot.id)
 
+    except IntegrityError as exc:
+        await session.rollback()
+        await ba_repo.mark_sync_failure(broker_account_id, str(exc))
+        raise
     except Exception as exc:
         await ba_repo.mark_sync_failure(broker_account_id, str(exc))
         raise
@@ -244,9 +254,6 @@ async def get_latest_profile(
     broker_account_id: uuid.UUID | None = None,
 ) -> TradingProfileSnapshot | None:
     repo = TradingProfileSnapshotRepository(session)
-    # If broker_account_id given, try scoped first, fall back to global
     if broker_account_id is not None:
-        scoped = await repo.latest(broker_account_id=broker_account_id)
-        if scoped is not None:
-            return scoped
+        return await repo.latest(broker_account_id=broker_account_id)
     return await repo.latest()

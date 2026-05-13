@@ -39,6 +39,22 @@ async def test_all_tables_exist(db_engine) -> None:
     assert not (expected - tables), f"Missing: {expected - tables}"
 
 
+@pytest.mark.asyncio
+async def test_ibkr_execution_exec_id_constraint_is_broker_scoped(db_engine) -> None:
+    async with db_engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT conname FROM pg_constraint "
+                "WHERE conrelid = 'ibkr_executions'::regclass "
+                "AND contype = 'u'"
+            )
+        )
+        constraints = {row[0] for row in result}
+
+    assert "uq_ibkr_exec_id" not in constraints
+    assert "uq_ibkr_executions_broker_exec_id" in constraints
+
+
 def _run_alembic_in_thread() -> None:
     """Sequential asyncio.run() calls — never nested, safe from a thread."""
 

@@ -26,6 +26,7 @@ import httpx
 from core.errors import IBKRFlexError
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # IBKR Flex response status codes (returned in the XML body)
 _FLEX_STATUS_QUEUED = "1003"
@@ -235,11 +236,12 @@ class FlexClient:
             )
 
         result = _parse_send_response(body, fallback_poll_url=self._poll_url)
+        redacted_statement_url = _redact_url(result.get_statement_url, token)
         logger.info(
             "flex_reference_code_received",
             extra={
                 "ref_code": result.reference_code,
-                "get_statement_url": result.get_statement_url,
+                "get_statement_url": redacted_statement_url,
                 "token_hint": token_hint,
             },
         )
@@ -269,7 +271,7 @@ class FlexClient:
                     "max": self._max_polls,
                     "ref_code": reference_code,
                     "token_hint": token_hint,
-                    "poll_url": url,
+                    "poll_url": _redact_url(url, token),
                 },
             )
             try:

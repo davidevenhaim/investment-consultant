@@ -701,3 +701,73 @@ async def test_score_breakdown_json_persisted_has_portfolio_in_completed(
     assert "portfolio_context" in bd.get("completed_components", [])
     assert "portfolio_context" not in bd.get("missing_components", [])
     assert bd.get("component_quality_scores", {}).get("portfolio_context") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_full_graph_uses_broker_scoped_symbol_trading_stats(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+) -> None:
+    """Graph state and persisted personalized rec include broker-scoped symbol stats."""
+    import datetime as dt
+
+    from db.models import BrokerAccount, ManualTrade
+    from db.models import PersonalizedRecommendation as PersonalizedRecM
+
+    broker_account = BrokerAccount(
+        provider="IBKR",
+        display_name="Graph Test Broker",
+        connection_mode="LOCAL_TWS",
+        client_id=1,
+        readonly=True,
+        is_active=True,
+        metadata_json={},
+    )
+    db_session.add(broker_account)
+    await db_session.flush()
+
+    now = dt.datetime.now(dt.UTC)
+    db_session.add_all(
+        [
+            ManualTrade(
+                broker_account_id=broker_account.id,
+                symbol="AAPL",
+                side="BUY",
+                quantity=10,
+                price=150,
+                executed_at=now - dt.timedelta(days=180),
+                source="manual",
+            ),
+            ManualTrade(
+                broker_account_id=broker_account.id,
+                symbol="AAPL",
+                side="SELL",
+                quantity=10,
+                price=180,
+                executed_at=now - dt.timedelta(days=30),
+                source="manual",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(
+        make_initial_state(run, ticker, "v0.1.0", broker_account_id=broker_account.id)
+    )
+
+    stats = final["symbol_trading_stats"]
+    assert stats
+    assert stats["executions"] == 2
+    assert stats["completed_trades"] == 1
+    assert stats["win_rate"] == pytest.approx(1.0)
+
+    result = await db_session.execute(
+        select(PersonalizedRecM)
+        .join(NeutralRecModel, PersonalizedRecM.neutral_recommendation_id == NeutralRecModel.id)
+        .where(NeutralRecModel.research_run_id == run.id)
+    )
+    personalized = result.scalar_one()
+    assert personalized.symbol_trading_stats_json == stats
