@@ -771,3 +771,93 @@ async def test_full_graph_uses_broker_scoped_symbol_trading_stats(
     )
     personalized = result.scalar_one()
     assert personalized.symbol_trading_stats_json == stats
+
+
+@pytest.mark.asyncio
+async def test_enforce_broker_scope_true_skips_unscoped_trades(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    """M10.3: API-style scoped runs must not merge rows with NULL broker_account_id."""
+    import datetime as dt
+
+    from db.models import ManualTrade
+
+    now = dt.datetime.now(dt.UTC)
+    db_session.add_all(
+        [
+            ManualTrade(
+                broker_account_id=None,
+                symbol="AAPL",
+                side="BUY",
+                quantity=10,
+                price=150,
+                executed_at=now - dt.timedelta(days=120),
+                source="manual",
+            ),
+            ManualTrade(
+                broker_account_id=None,
+                symbol="AAPL",
+                side="SELL",
+                quantity=10,
+                price=180,
+                executed_at=now - dt.timedelta(days=30),
+                source="manual",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider, mem_store)
+    final = await graph.ainvoke(
+        make_initial_state(run, ticker, "v0.1.0", enforce_broker_scope=True)
+    )
+    assert not final.get("symbol_trading_stats")
+
+
+@pytest.mark.asyncio
+async def test_enforce_broker_scope_false_loads_unscoped_trades(
+    db_session: AsyncSession,
+    market_provider: MockProvider,
+    fund_provider: MockFundamentalsProvider,
+    mem_store: FakeMemoryStore,
+) -> None:
+    """Legacy graph callers (enforce_broker_scope=False) still see global unscoped trades."""
+    import datetime as dt
+
+    from db.models import ManualTrade
+
+    now = dt.datetime.now(dt.UTC)
+    db_session.add_all(
+        [
+            ManualTrade(
+                broker_account_id=None,
+                symbol="MSFT",
+                side="BUY",
+                quantity=5,
+                price=300,
+                executed_at=now - dt.timedelta(days=100),
+                source="manual",
+            ),
+            ManualTrade(
+                broker_account_id=None,
+                symbol="MSFT",
+                side="SELL",
+                quantity=5,
+                price=330,
+                executed_at=now - dt.timedelta(days=20),
+                source="manual",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    run, ticker = await _make_run_and_ticker(db_session, "MSFT")
+    graph = _graph(db_session, market_provider, fund_provider, mem_store)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+    stats = final.get("symbol_trading_stats") or {}
+    assert stats.get("executions") == 2
+    assert stats.get("completed_trades") == 1

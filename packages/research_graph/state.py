@@ -182,6 +182,8 @@ class ResearchState(TypedDict):
 
     # ── broker account (M9.6+) ───────────────────────────────────────────────
     broker_account_id: str | None               # UUID str of BrokerAccount used for this run
+    # M10.3: API runs set True — skip global trade/profile fallback when broker_account_id is None
+    enforce_broker_scope: bool
 
     # ── trading history (M9.5+) ──────────────────────────────────────────────
     symbol_trading_stats: dict[str, Any] | None  # per-symbol stats from trading profile

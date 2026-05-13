@@ -2,6 +2,7 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.asyncio
@@ -360,6 +361,51 @@ async def test_symbol_trading_stats_do_not_leak_across_users(
         if item["symbol"] == "AAPL"
     )
     assert run_aapl_b["personalized"]["symbol_trading_stats_json"] == {}
+
+
+@pytest.mark.asyncio
+async def test_api_research_skips_null_broker_orphan_trades_without_broker_account(
+    api_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """M10.3: API runs with no broker must not load global unscoped trade rows."""
+    import datetime as dt
+
+    from db.models import ManualTrade
+
+    now = dt.datetime.now(dt.UTC)
+    db_session.add_all(
+        [
+            ManualTrade(
+                broker_account_id=None,
+                symbol="AAPL",
+                side="BUY",
+                quantity=10,
+                price=150,
+                executed_at=now - dt.timedelta(days=90),
+                source="manual",
+            ),
+            ManualTrade(
+                broker_account_id=None,
+                symbol="AAPL",
+                side="SELL",
+                quantity=10,
+                price=200,
+                executed_at=now - dt.timedelta(days=10),
+                source="manual",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    await api_client.post("/api/v1/watchlist", json={"symbol": "AAPL"})
+    run_resp = await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
+    assert run_resp.status_code == 201
+
+    latest = await api_client.get("/api/v1/recommendations/latest")
+    aapl = next(item for item in latest.json()["data"] if item["symbol"] == "AAPL")
+    assert aapl["personalized"] is not None
+    assert aapl["personalized"]["symbol_trading_stats_json"] == {}
 
 
 @pytest.mark.asyncio

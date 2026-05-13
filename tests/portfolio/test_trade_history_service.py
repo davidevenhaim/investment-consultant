@@ -145,7 +145,7 @@ class TestSyncIBKRExecutions:
         ba_repo_mock.mark_sync_success.assert_called_once_with(ba_id)
 
     @pytest.mark.asyncio
-    async def test_rolls_back_before_marking_failure_on_integrity_error(
+    async def test_integrity_error_rolls_back_and_does_not_mark_sync_failure(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
@@ -169,7 +169,7 @@ class TestSyncIBKRExecutions:
             )
 
         session.rollback.assert_awaited_once()
-        ba_repo_mock.mark_sync_failure.assert_awaited_once()
+        ba_repo_mock.mark_sync_failure.assert_not_called()
 
 
 class TestFakeIBKRClient:

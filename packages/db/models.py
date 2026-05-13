@@ -265,6 +265,14 @@ class BrokerAccount(Base, UUIDMixin, TimestampMixin):
 
 
 class IBKRExecution(Base, UUIDMixin, TimestampMixin):
+    """IBKR execution row (session + Flex import).
+
+    TODO (legacy transition): ``broker_account_id`` remains nullable. Postgres treats
+    each NULL as distinct in ``UNIQUE(broker_account_id, exec_id)``, so unscoped rows
+    are not deduped by that constraint. Future hardening: backfill or retire NULL
+    broker rows, then set ``broker_account_id`` NOT NULL.
+    """
+
     __tablename__ = "ibkr_executions"
     __table_args__ = (
         UniqueConstraint(

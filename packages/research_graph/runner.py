@@ -61,6 +61,7 @@ def make_initial_state(
     strategy_version: str,
     strategy_config: dict[str, Any] | None = None,
     broker_account_id: uuid.UUID | str | None = None,
+    enforce_broker_scope: bool = False,
 ) -> ResearchState:
     """Build the initial state for one ticker in a research run."""
     return ResearchState(
@@ -87,6 +88,7 @@ def make_initial_state(
         news_score_result=None,
         news_analysis=None,
         broker_account_id=str(broker_account_id) if broker_account_id is not None else None,
+        enforce_broker_scope=enforce_broker_scope,
         portfolio_context=None,
         portfolio_snapshot_id=None,
         current_position_weight=0.0,
@@ -128,6 +130,7 @@ async def run_research_for_run(
     llm_client: LLMClient | None = None,
     news_provider: NewsProvider | None = None,
     broker_account_id: uuid.UUID | str | None = None,
+    enforce_broker_scope: bool = False,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
@@ -163,6 +166,7 @@ async def run_research_for_run(
                 strategy_version,
                 strategy_config,
                 broker_account_id=broker_account_id,
+                enforce_broker_scope=enforce_broker_scope,
             )
             final_state: ResearchState = await graph.ainvoke(initial_state)
 

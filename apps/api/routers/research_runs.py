@@ -88,6 +88,7 @@ async def create_research_run(
             db,
             strategy_version,
             broker_account_id=broker_account_id,
+            enforce_broker_scope=True,
         )
         final_status = (
             ResearchRunStatus.COMPLETED

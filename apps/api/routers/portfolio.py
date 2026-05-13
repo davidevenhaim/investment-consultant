@@ -34,6 +34,7 @@ from portfolio.service import (
     ensure_default_portfolio,
     refresh_portfolio_prices,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies.auth import CurrentUser, get_current_user
@@ -42,6 +43,14 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _sync_integrity_conflict_response() -> HTTPException:
+    """Race or duplicate-key during broker sync — safe to retry; never echo DB internals."""
+    return HTTPException(
+        status_code=409,
+        detail="Broker sync conflict. Please retry.",
+    )
 
 
 async def _active_broker_account_id(
@@ -123,6 +132,9 @@ async def _run_ibkr_sync(
         )
         inserted = await sync_ibkr_executions(db, executions, broker_account_id=ba_id)
         await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise _sync_integrity_conflict_response() from None
     except IBKRConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -504,7 +516,11 @@ async def sync_flex_global(
             db, broker_account.id, token, query_id
         )
         await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise _sync_integrity_conflict_response() from None
     except IBKRFlexError as exc:
+        await db.rollback()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return api_response(result, request)
@@ -557,7 +573,11 @@ async def sync_flex_for_account(
             db, broker_account_id, token, query_id
         )
         await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise _sync_integrity_conflict_response() from None
     except IBKRFlexError as exc:
+        await db.rollback()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return api_response(result, request)

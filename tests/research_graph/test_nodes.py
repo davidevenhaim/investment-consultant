@@ -67,6 +67,7 @@ def _base_state(symbol: str = "AAPL") -> ResearchState:
         errors=[],
         data_quality_score=1.0,
         confidence_penalties=[],
+        enforce_broker_scope=False,
     )
 
 

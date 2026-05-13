@@ -56,10 +56,9 @@ async def sync_ibkr_executions(
                 "broker_account_id": str(broker_account_id) if broker_account_id else None,
             },
         )
-    except IntegrityError as exc:
+    except IntegrityError:
         await session.rollback()
-        if broker_account_id is not None:
-            await ba_repo.mark_sync_failure(broker_account_id, str(exc))
+        # Duplicate / race vs exists_by_exec_id — do not mark account failed; router maps to 409.
         raise
     except Exception as exc:
         if broker_account_id is not None:
@@ -234,9 +233,8 @@ async def sync_ibkr_flex_executions(
         snapshot = await build_and_save_profile(session, broker_account_id=broker_account_id)
         profile_snapshot_id = str(snapshot.id)
 
-    except IntegrityError as exc:
+    except IntegrityError:
         await session.rollback()
-        await ba_repo.mark_sync_failure(broker_account_id, str(exc))
         raise
     except Exception as exc:
         await ba_repo.mark_sync_failure(broker_account_id, str(exc))

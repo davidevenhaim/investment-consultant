@@ -14,6 +14,11 @@ logger = get_logger(__name__)
 _DEFAULT_MAX_WEIGHT = 0.15
 
 
+def _skip_unscoped_trade_loading(state: ResearchState, ba_uuid: uuid.UUID | None) -> bool:
+    """True when API-scoped run has no broker: do not load global trade/profile."""
+    return bool(state.get("enforce_broker_scope")) and ba_uuid is None
+
+
 def make_load_portfolio_context(
     session: AsyncSession,
 ) -> Callable[[ResearchState], Any]:
@@ -169,24 +174,27 @@ def make_load_portfolio_context(
 
             symbol_trading_stats: dict[str, Any] = {}
             behavioral_flags: list[str] = []
-            try:
-                from portfolio.trade_history_service import (
-                    get_latest_profile,
-                    get_symbol_trading_stats,
-                )
+            if _skip_unscoped_trade_loading(state, ba_uuid):
+                pass
+            else:
+                try:
+                    from portfolio.trade_history_service import (
+                        get_latest_profile,
+                        get_symbol_trading_stats,
+                    )
 
-                symbol_trading_stats = await get_symbol_trading_stats(
-                    session, symbol, broker_account_id=ba_uuid
-                )
-                latest_profile = await get_latest_profile(session, broker_account_id=ba_uuid)
-                if latest_profile:
-                    behavioral_flags = list(latest_profile.behavioral_flags_json or [])
-            except Exception as trade_exc:
-                logger.debug(
-                    "load_portfolio_context_trade_stats_failed",
-                    symbol=symbol,
-                    error=str(trade_exc),
-                )
+                    symbol_trading_stats = await get_symbol_trading_stats(
+                        session, symbol, broker_account_id=ba_uuid
+                    )
+                    latest_profile = await get_latest_profile(session, broker_account_id=ba_uuid)
+                    if latest_profile:
+                        behavioral_flags = list(latest_profile.behavioral_flags_json or [])
+                except Exception as trade_exc:
+                    logger.debug(
+                        "load_portfolio_context_trade_stats_failed",
+                        symbol=symbol,
+                        error=str(trade_exc),
+                    )
 
             logger.info(
                 "load_portfolio_context_ok",
@@ -259,24 +267,27 @@ async def _load_trade_stats_only(
 
     symbol_trading_stats: dict[str, Any] = {}
     behavioral_flags: list[str] = []
-    try:
-        from portfolio.trade_history_service import (
-            get_latest_profile,
-            get_symbol_trading_stats,
-        )
+    if _skip_unscoped_trade_loading(state, ba_uuid):
+        pass
+    else:
+        try:
+            from portfolio.trade_history_service import (
+                get_latest_profile,
+                get_symbol_trading_stats,
+            )
 
-        symbol_trading_stats = await get_symbol_trading_stats(
-            session, symbol, broker_account_id=ba_uuid
-        )
-        latest_profile = await get_latest_profile(session, broker_account_id=ba_uuid)
-        if latest_profile:
-            behavioral_flags = list(latest_profile.behavioral_flags_json or [])
-    except Exception as trade_exc:
-        logger.debug(
-            "load_portfolio_context_trade_stats_failed",
-            symbol=symbol,
-            error=str(trade_exc),
-        )
+            symbol_trading_stats = await get_symbol_trading_stats(
+                session, symbol, broker_account_id=ba_uuid
+            )
+            latest_profile = await get_latest_profile(session, broker_account_id=ba_uuid)
+            if latest_profile:
+                behavioral_flags = list(latest_profile.behavioral_flags_json or [])
+        except Exception as trade_exc:
+            logger.debug(
+                "load_portfolio_context_trade_stats_failed",
+                symbol=symbol,
+                error=str(trade_exc),
+            )
 
     return {
         **_safe_defaults(),
