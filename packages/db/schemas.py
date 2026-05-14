@@ -429,3 +429,88 @@ class MeasureOutcomesRequest(BaseModel):
 
 class LearningEventStatusUpdate(BaseModel):
     status: Literal["REVIEWED", "DISMISSED", "APPLIED"]
+
+
+# ── Advisor Backtest (M11.1) ──────────────────────────────────────────────────
+
+import datetime as _dt  # noqa: E402
+
+
+class AdvisorBacktestRequest(BaseModel):
+    start_date: _dt.date
+    end_date: _dt.date
+    initial_cash: float = Field(gt=0)
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=20)
+    name: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+
+
+class AdvisorBacktestRunResponse(_OrmBase):
+    id: uuid.UUID
+    name: str | None
+    start_date: _dt.date
+    end_date: _dt.date
+    initial_cash: float
+    final_equity: float | None
+    cash_final: float | None
+    total_return_pct: float | None
+    benchmark_symbol: str | None
+    benchmark_return_pct: float | None
+    relative_return_pct: float | None
+    max_drawdown_pct: float | None
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    status: str
+    summary_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdvisorBacktestTradeResponse(_OrmBase):
+    id: uuid.UUID
+    symbol: str
+    action: str
+    trade_type: str
+    trade_date: datetime
+    price: float | None
+    quantity: float | None
+    cash_delta: float | None
+    position_before: float | None
+    position_after: float | None
+    reason: str | None
+
+
+class AdvisorBacktestEquityPointResponse(_OrmBase):
+    date: _dt.date
+    equity: float
+    cash: float
+    positions_value: float
+    drawdown_pct: float | None
+    benchmark_value: float | None
+
+
+class AdvisorBacktestRunDetailResponse(_OrmBase):
+    id: uuid.UUID
+    name: str | None
+    start_date: _dt.date
+    end_date: _dt.date
+    initial_cash: float
+    final_equity: float | None
+    total_return_pct: float | None
+    benchmark_symbol: str | None
+    benchmark_return_pct: float | None
+    relative_return_pct: float | None
+    max_drawdown_pct: float | None
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    status: str
+    summary_json: dict[str, Any]
+    assumptions_json: dict[str, Any]
+    created_at: datetime
+    trades: list[AdvisorBacktestTradeResponse] = []
+    equity_points: list[AdvisorBacktestEquityPointResponse] = []

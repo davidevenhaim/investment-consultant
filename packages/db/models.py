@@ -54,6 +54,9 @@ __all__ = [
     "AuditLog",
     "RecommendationOutcome",
     "LearningEvent",
+    "AdvisorBacktestRun",
+    "AdvisorBacktestTrade",
+    "AdvisorBacktestEquityPoint",
 ]
 
 
@@ -816,3 +819,124 @@ class LearningEvent(Base, UUIDMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="OPEN")
 
     outcome: Mapped["RecommendationOutcome | None"] = relationship("RecommendationOutcome")
+
+
+# ── M11.1: Advisor Backtest (Follow-the-Advisor Simulation) ──────────────────
+
+
+class AdvisorBacktestRun(Base, UUIDMixin, TimestampMixin):
+    """One simulated paper-portfolio run following the advisor's recommendations."""
+
+    __tablename__ = "advisor_backtest_runs"
+    __table_args__ = (
+        Index("ix_ab_run_user_id", "user_id"),
+        Index("ix_ab_run_dates", "start_date", "end_date"),
+        Index("ix_ab_run_status", "status"),
+        Index("ix_ab_run_created_at", "created_at"),
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    initial_cash: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    final_equity: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    cash_final: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    total_return_pct: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    benchmark_symbol: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, default="SPY", server_default=text("'SPY'")
+    )
+    benchmark_return_pct: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    relative_return_pct: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    max_drawdown_pct: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    total_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    winning_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losing_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # COMPLETED | INSUFFICIENT_DATA | ERROR
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    assumptions_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    summary_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    trades: Mapped[list["AdvisorBacktestTrade"]] = relationship(
+        "AdvisorBacktestTrade", back_populates="run", cascade="all, delete-orphan"
+    )
+    equity_points: Mapped[list["AdvisorBacktestEquityPoint"]] = relationship(
+        "AdvisorBacktestEquityPoint", back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class AdvisorBacktestTrade(Base, UUIDMixin, TimestampMixin):
+    """One simulated trade or skip record within an advisor backtest run."""
+
+    __tablename__ = "advisor_backtest_trades"
+    __table_args__ = (
+        Index("ix_ab_trade_run_id", "backtest_run_id"),
+        Index("ix_ab_trade_user_id", "user_id"),
+        Index("ix_ab_trade_symbol", "symbol"),
+        Index("ix_ab_trade_date", "trade_date"),
+    )
+
+    backtest_run_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("advisor_backtest_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    recommendation_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    research_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    # BUY | SELL | REDUCE | SKIP
+    trade_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    trade_date: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    price: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    cash_delta: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    position_before: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    position_after: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    run: Mapped["AdvisorBacktestRun"] = relationship(
+        "AdvisorBacktestRun", back_populates="trades"
+    )
+
+
+class AdvisorBacktestEquityPoint(Base, UUIDMixin, TimestampMixin):
+    """Daily equity snapshot within an advisor backtest run."""
+
+    __tablename__ = "advisor_backtest_equity_points"
+    __table_args__ = (
+        UniqueConstraint("backtest_run_id", "date", name="uq_ab_equity_run_date"),
+        Index("ix_ab_equity_run_id", "backtest_run_id"),
+        Index("ix_ab_equity_date", "date"),
+    )
+
+    backtest_run_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("advisor_backtest_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    equity: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    cash: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    positions_value: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    drawdown_pct: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    benchmark_value: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    run: Mapped["AdvisorBacktestRun"] = relationship(
+        "AdvisorBacktestRun", back_populates="equity_points"
+    )
