@@ -14,6 +14,7 @@ from backtesting.advisor_simulation import (
     _find_price,
     _latest_price_on_or_before,
     _Position,
+    _replay_apply_executed_trade,
     _SimState,
     run_advisor_backtest,
 )
@@ -188,6 +189,31 @@ def test_latest_price_on_or_before() -> None:
     # Date after last bar
     price2 = _latest_price_on_or_before(dt.date(2024, 1, 10), b, "AAPL")
     assert price2 == 102.0
+
+
+def test_replay_apply_buy_then_reduce_matches_direct_state() -> None:
+    """Replay helper builds same qty/cash as sequential BUY + REDUCE rows."""
+    row_buy = {
+        "symbol": "AAPL",
+        "trade_type": "BUY",
+        "cash_delta": -500.0,
+        "quantity": 5.0,
+        "price": 100.0,
+        "position_after": None,
+    }
+    row_reduce = {
+        "symbol": "AAPL",
+        "trade_type": "REDUCE",
+        "cash_delta": 250.0,
+        "quantity": 2.5,
+        "price": 100.0,
+        "position_after": 2.5,
+    }
+    st = _SimState(cash=10_000.0)
+    _replay_apply_executed_trade(st, row_buy)
+    _replay_apply_executed_trade(st, row_reduce)
+    assert st.cash == pytest.approx(9750.0)
+    assert st.positions["AAPL"].qty == pytest.approx(2.5)
 
 
 # ── DB-bound simulation tests ─────────────────────────────────────────────────
@@ -468,6 +494,105 @@ async def test_user_a_recs_not_used_for_user_b(db_session) -> None:
     # User B must have no real trades
     real_trades_b = [t for t in run_b.trades if t.trade_type != "SKIP"]
     assert len(real_trades_b) == 0
+
+
+@pytest.mark.asyncio
+async def test_equity_curve_no_lookahead_before_first_buy(db_session) -> None:
+    """Positions and reduced cash appear only on/after the first BUY execution date."""
+    uid = uuid.uuid4()
+    buy_rec = dt.date(2026, 1, 15)
+    start = dt.date(2026, 1, 2)
+    end = dt.date(2026, 2, 28)
+
+    await _seed_market_bars(
+        db_session, "AAPL", start - dt.timedelta(days=5), n=80, start_price=100.0, dr=0.0
+    )
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_rec
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    assert len(buys) == 1
+    exec_d = buys[0].trade_date.date()
+
+    for ep in run.equity_points:
+        if ep.date < exec_d:
+            assert float(ep.cash) == pytest.approx(10_000.0, rel=1e-4)
+            assert float(ep.positions_value) == pytest.approx(0.0, abs=0.02)
+
+    after = [ep for ep in run.equity_points if ep.date >= exec_d]
+    assert after, "expected at least one equity point on/after buy execution"
+    assert float(min(after, key=lambda e: e.date).positions_value) > 0.0
+
+
+@pytest.mark.asyncio
+async def test_final_equity_and_cash_match_last_equity_point(db_session) -> None:
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+    )
+
+    assert run.equity_points
+    last_ep = max(run.equity_points, key=lambda e: e.date)
+    assert float(run.final_equity) == pytest.approx(float(last_ep.equity), rel=1e-4)
+    assert float(run.cash_final) == pytest.approx(float(last_ep.cash), rel=1e-4)
+    tr = (float(run.final_equity) - 10_000.0) / 10_000.0
+    assert float(run.total_return_pct) == pytest.approx(tr, rel=1e-4)
+
+
+@pytest.mark.asyncio
+async def test_reduce_hits_position_only_from_reduce_execution_date(db_session) -> None:
+    """REDUCE lowers MTM position value from the reduce execution date onward."""
+    uid = uuid.uuid4()
+    d_buy = dt.date(2026, 1, 10)
+    d_reduce = dt.date(2026, 1, 20)
+    start = dt.date(2026, 1, 2)
+    end = dt.date(2026, 2, 15)
+
+    await _seed_market_bars(
+        db_session, "AAPL", start - dt.timedelta(days=5), n=80, start_price=100.0, dr=0.0
+    )
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=d_buy)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "REDUCE", rec_date=d_reduce)
+
+    run = await run_advisor_backtest(
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+    )
+
+    reduces = [t for t in run.trades if t.trade_type == "REDUCE"]
+    assert len(reduces) == 1
+    exec_red = reduces[0].trade_date.date()
+
+    pts_before = [ep for ep in run.equity_points if ep.date < exec_red]
+    pts_from_red = [ep for ep in run.equity_points if ep.date >= exec_red]
+    assert pts_before and pts_from_red
+    pos_before_max = max(float(ep.positions_value) for ep in pts_before)
+    pos_at_red = float(min(pts_from_red, key=lambda e: e.date).positions_value)
+    assert pos_before_max > 0.0
+    assert pos_at_red > 0.0
+    assert pos_at_red < pos_before_max * 0.75
 
 
 @pytest.mark.asyncio

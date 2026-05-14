@@ -188,6 +188,39 @@ def _make_trade_row(
     }
 
 
+def _replay_apply_executed_trade(state: _SimState, t: dict[str, Any]) -> None:
+    """Apply a BUY / SELL / REDUCE row when replaying the portfolio for the equity curve.
+
+    Must mirror the executed trade rows from the recommendation pass: same cash_delta,
+    quantities, and position_after for REDUCE so MTM equity matches that pass.
+    """
+    sym = t["symbol"].upper()
+    tt = t["trade_type"]
+    if tt == "BUY":
+        state.cash += float(t["cash_delta"] or 0.0)
+        if sym not in state.positions:
+            state.positions[sym] = _Position(sym)
+        state.positions[sym].update_buy(
+            float(t["quantity"] or 0.0),
+            float(t["price"] or 0.0),
+        )
+    elif tt == "SELL":
+        state.cash += float(t["cash_delta"] or 0.0)
+        state.positions[sym] = _Position(sym)
+    elif tt == "REDUCE":
+        state.cash += float(t["cash_delta"] or 0.0)
+        if sym not in state.positions:
+            state.positions[sym] = _Position(sym)
+        pa = t["position_after"]
+        state.positions[sym].qty = float(pa) if pa is not None else 0.0
+        if state.positions[sym].qty <= 0.0:
+            state.positions[sym].qty = 0.0
+            state.positions[sym].avg_cost = 0.0
+    else:  # pragma: no cover - defensive
+        msg = f"replay: unexpected trade_type={tt!r}"
+        raise ValueError(msg)
+
+
 # ── Main simulation engine ─────────────────────────────────────────────────────
 
 
@@ -446,7 +479,7 @@ async def run_advisor_backtest(
             ))
         # ignore unknown actions silently
 
-    # 8. Build equity curve from trading_dates
+    # 8. Build equity curve: replay executed trades chronologically per date (no lookahead)
     benchmark_bars = bars_by_symbol.get(benchmark_symbol.upper(), {})
     bench_start_price: float | None = None
     bench_dates = sorted(benchmark_bars)
@@ -455,16 +488,35 @@ async def run_advisor_backtest(
         if first_bench:
             bench_start_price = benchmark_bars[first_bench]
 
+    executed_seq: list[tuple[int, dict[str, Any]]] = [
+        (i, t)
+        for i, t in enumerate(trade_dicts)
+        if t["trade_type"] in ("BUY", "SELL", "REDUCE")
+    ]
+    executed_seq.sort(key=lambda it: (it[1]["trade_date"], it[0]))
+
+    curve_state = _SimState(cash=initial_cash)
+    curve_state.peak_equity = initial_cash
+    ex_i = 0
+
     equity_point_rows: list[dict[str, Any]] = []
+    last_equity = float(initial_cash)
+    last_cash = float(initial_cash)
     for d in trading_dates:
+        while ex_i < len(executed_seq) and executed_seq[ex_i][1]["trade_date"].date() <= d:
+            _replay_apply_executed_trade(curve_state, executed_seq[ex_i][1])
+            ex_i += 1
+
         day_prices: dict[str, float] = {}
-        for sym in state.positions:
+        for sym in curve_state.positions:
             p = _latest_price_on_or_before(d, bars_by_symbol, sym)
             if p:
                 day_prices[sym] = p
-        eq = state.equity(day_prices)
-        pos_val = eq - state.cash
-        dd = state.update_drawdown(eq)
+        eq = curve_state.equity(day_prices)
+        last_equity = eq
+        last_cash = float(curve_state.cash)
+        pos_val = eq - curve_state.cash
+        dd = curve_state.update_drawdown(eq)
 
         bench_val: float | None = None
         if bench_start_price and d in benchmark_bars and initial_cash > 0:
@@ -473,22 +525,17 @@ async def run_advisor_backtest(
         equity_point_rows.append({
             "date": d,
             "equity": round(eq, 4),
-            "cash": round(state.cash, 4),
+            "cash": round(curve_state.cash, 4),
             "positions_value": round(max(pos_val, 0.0), 4),
             "drawdown_pct": round(dd, 8),
             "benchmark_value": round(bench_val, 4) if bench_val else None,
         })
 
-    # 9. Final equity and returns
-    final_prices: dict[str, float] = {}
-    for sym in state.positions:
-        p = _latest_price_on_or_before(end_date, bars_by_symbol, sym)
-        if p:
-            final_prices[sym] = p
-
-    final_equity = state.equity(final_prices)
+    # 9. Final equity = last curve point (fills after end_date excluded from curve)
+    final_equity = last_equity
     total_return = (final_equity - initial_cash) / initial_cash if initial_cash > 0 else 0.0
-    max_drawdown = state.max_drawdown
+    max_drawdown = curve_state.max_drawdown
+    cash_final_value = last_cash
 
     # Benchmark return
     bench_return: float | None = None
@@ -542,7 +589,7 @@ async def run_advisor_backtest(
         end_date=end_date,
         initial_cash=initial_cash,
         final_equity=final_equity,
-        cash_final=state.cash,
+        cash_final=cash_final_value,
         total_return_pct=total_return,
         benchmark_symbol=benchmark_symbol,
         benchmark_return_pct=bench_return,

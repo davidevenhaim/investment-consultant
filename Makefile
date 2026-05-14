@@ -1,4 +1,4 @@
-.PHONY: up down migrate migrate-local seed test test-integration lint format logs shell-api run build venv install memory-reset-dev
+.PHONY: up down migrate migrate-local seed seed-advisor-scenario test test-integration lint format logs shell-api run build venv install memory-reset-dev
 
 PYTHON    := python3.12
 VENV      := .venv
@@ -36,6 +36,9 @@ seed:
 
 seed-local:
 	PYTHONPATH=$(PYTHONPATH) $(BIN)/python apps/cli/seed.py
+
+seed-advisor-scenario: $(VENV)
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/python -m apps.cli.seed_advisor_scenario --reset
 
 test: $(VENV)
 	PYTHONPATH=$(PYTHONPATH) $(BIN)/pytest tests/ -v --cov=packages --cov=apps --cov-report=term-missing -m "not integration"
