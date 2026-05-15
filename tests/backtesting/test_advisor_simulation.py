@@ -595,6 +595,237 @@ async def test_reduce_hits_position_only_from_reduce_execution_date(db_session) 
     assert pos_at_red < pos_before_max * 0.75
 
 
+# ── M11.4 named regression tests — lookahead-bias guardrails ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_no_lookahead_before_first_buy(db_session) -> None:
+    """All equity points before the first BUY execution date have cash=initial_cash, pos=0."""
+    uid = uuid.uuid4()
+    # Recommendation on Jan 15; simulation starts Jan 2
+    buy_date = dt.date(2026, 1, 15)
+    start = dt.date(2026, 1, 2)
+    end = dt.date(2026, 2, 28)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=80, dr=0.0)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_date)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    assert len(buys) == 1
+    exec_d = buys[0].trade_date.date()
+
+    # Every equity point strictly before the execution date must show the initial state.
+    pre_trade = [ep for ep in run.equity_points if ep.date < exec_d]
+    assert pre_trade, "expected equity points before the buy date"
+    for ep in pre_trade:
+        assert float(ep.cash) == pytest.approx(10_000.0, rel=1e-4), (
+            f"cash should be initial_cash before first BUY; got {ep.cash} on {ep.date}"
+        )
+        assert float(ep.positions_value) == pytest.approx(0.0, abs=0.02), (
+            f"positions_value should be 0 before first BUY; got {ep.positions_value} on {ep.date}"
+        )
+        assert float(ep.equity) == pytest.approx(10_000.0, rel=1e-4), (
+            f"equity should equal initial_cash before first BUY; got {ep.equity} on {ep.date}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_buy_affects_equity_from_trade_date_onward(db_session) -> None:
+    """Cash decreases and positions_value > 0 only on/after the BUY execution date."""
+    uid = uuid.uuid4()
+    buy_date = dt.date(2026, 1, 15)
+    start = dt.date(2026, 1, 2)
+    end = dt.date(2026, 2, 28)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=80, dr=0.0)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_date)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    assert len(buys) == 1
+    exec_d = buys[0].trade_date.date()
+
+    first_on_or_after = min(
+        (ep for ep in run.equity_points if ep.date >= exec_d),
+        key=lambda e: e.date,
+    )
+    assert float(first_on_or_after.cash) < 10_000.0, "cash must decrease after BUY"
+    assert float(first_on_or_after.positions_value) > 0.0, "positions_value must be > 0 after BUY"
+
+
+@pytest.mark.asyncio
+async def test_reduce_or_sell_affects_only_from_trade_date(db_session) -> None:
+    """SELL closes position: all equity points before SELL show original qty; after shows 0."""
+    uid = uuid.uuid4()
+    d_buy = dt.date(2026, 1, 10)
+    d_sell = dt.date(2026, 1, 25)
+    start = dt.date(2026, 1, 2)
+    end = dt.date(2026, 2, 15)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=80, dr=0.0)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=d_buy)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "SELL", rec_date=d_sell)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    sells = [t for t in run.trades if t.trade_type == "SELL"]
+    assert len(sells) == 1
+    exec_sell_d = sells[0].trade_date.date()
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    exec_buy_d = buys[0].trade_date.date()
+
+    # Between BUY and SELL, positions_value > 0
+    between = [ep for ep in run.equity_points if exec_buy_d <= ep.date < exec_sell_d]
+    assert between, "expected equity points between buy and sell"
+    for ep in between:
+        assert float(ep.positions_value) > 0.0, (
+            f"positions_value should be > 0 between BUY and SELL; got {ep.positions_value} on {ep.date}"
+        )
+
+    # On/after SELL date, positions_value should be 0 (full position sold)
+    after_sell = [ep for ep in run.equity_points if ep.date >= exec_sell_d]
+    assert after_sell, "expected equity points after sell"
+    for ep in after_sell:
+        assert float(ep.positions_value) == pytest.approx(0.0, abs=0.02), (
+            f"positions_value should be 0 after SELL; got {ep.positions_value} on {ep.date}"
+        )
+
+    # After SELL, cash should be roughly back near initial_cash (flat price scenario)
+    last_ep = max(after_sell, key=lambda e: e.date)
+    assert float(last_ep.cash) == pytest.approx(10_000.0, rel=0.02)
+
+
+@pytest.mark.asyncio
+async def test_final_equity_equals_last_equity_point(db_session) -> None:
+    """run.final_equity must exactly equal the last equity_point.equity."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.002)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    assert run.equity_points
+    last_ep = max(run.equity_points, key=lambda e: e.date)
+    assert float(run.final_equity) == pytest.approx(float(last_ep.equity), rel=1e-5), (
+        f"final_equity={run.final_equity} != last equity_point.equity={last_ep.equity}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_total_return_uses_last_equity(db_session) -> None:
+    """total_return_pct must equal (last_equity_point.equity - initial_cash) / initial_cash."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+    initial_cash = 10_000.0
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.002)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=initial_cash,
+    )
+
+    last_ep = max(run.equity_points, key=lambda e: e.date)
+    expected_tr = (float(last_ep.equity) - initial_cash) / initial_cash
+    assert float(run.total_return_pct) == pytest.approx(expected_tr, rel=1e-5)
+
+
+@pytest.mark.asyncio
+async def test_max_drawdown_from_chronological_curve(db_session) -> None:
+    """Max drawdown is based on the chronological equity curve (not final equity state).
+
+    Price rises 1 %/day for 20 bars then falls 2 %/day for 20 bars.
+    The max drawdown should reflect the peak-to-trough in the *chronological* curve.
+    A lookahead implementation (apply final state everywhere) would compute the wrong peak.
+    """
+    from db.models import MarketPrice
+
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 5, 30)
+    initial_cash = 10_000.0
+
+    # Seed bars: buffer (flat), then 20 up days, then 20 down days
+    price = 100.0
+    d = start - dt.timedelta(days=5)
+    rows = []
+    bar_idx = 0
+    while bar_idx < 50:
+        while d.weekday() >= 5:
+            d += dt.timedelta(days=1)
+        rows.append(MarketPrice(
+            symbol="AAPL", price_date=d,
+            open=round(price, 6), high=round(price * 1.002, 6),
+            low=round(price * 0.998, 6), close=round(price, 6),
+            adjusted_close=round(price, 6), volume=1_000_000, provider="yfinance",
+        ))
+        # Buffer bars (first 5): flat. Then 20 bars up, then 20 down.
+        if bar_idx < 5:
+            pass  # flat
+        elif bar_idx < 25:
+            price *= 1.01  # rise 1 %/day
+        else:
+            price *= 0.98  # fall 2 %/day
+        bar_idx += 1
+        d += dt.timedelta(days=1)
+    db_session.add_all(rows)
+    await db_session.flush()
+
+    # BUY on the first trading day (bar_idx=5 = start), price = 100.0
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=initial_cash,
+    )
+
+    assert run.max_drawdown_pct is not None
+    max_dd = float(run.max_drawdown_pct)
+
+    # Price peaked somewhere in the rising phase, then fell.
+    # With only the portfolio's 10 % weight in AAPL, the portfolio drawdown is roughly
+    # 10 % of the price drawdown. With 2 %/day falls over ~20 bars the price falls ~33 %,
+    # producing a portfolio drawdown of ~3-5 %. Verify a meaningful non-trivial drawdown.
+    assert max_dd < -0.02, f"expected max_drawdown < -2 %; got {max_dd:.4f}"
+
+    # It must also be computed from the chronological curve, not from a final-state shortcut.
+    # Verify the last equity point has lower equity than the peak in the curve.
+    eps_sorted = sorted(run.equity_points, key=lambda e: e.date)
+    peak_equity = max(float(ep.equity) for ep in eps_sorted)
+    last_equity = float(eps_sorted[-1].equity)
+    assert last_equity < peak_equity, "final equity should be below peak (price falls at end)"
+    # The reported drawdown should match the worst point.
+    expected_worst = min(
+        (float(ep.equity) - peak_equity) / peak_equity
+        for ep in eps_sorted
+        if float(ep.equity) <= peak_equity
+    )
+    assert abs(max_dd - expected_worst) < 0.005, (
+        f"max_drawdown_pct={max_dd:.6f} deviates too much from worst-point drawdown {expected_worst:.6f}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_summary_json_fields(db_session) -> None:
     """summary_json contains required fields including human_summary."""
