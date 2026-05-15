@@ -37,3 +37,7 @@ dist/
 build/
 coverage/
 pnpm-lock.yaml.tmp
+# Local environment secrets
+.env
+.env.*
+!.env.example
