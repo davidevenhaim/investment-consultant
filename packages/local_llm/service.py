@@ -6,7 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from core.config import get_settings
+from core.config import Settings, get_settings
 from db.models import AdvisorBacktestAnalysis, AdvisorBacktestRun
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -27,18 +27,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_VERSION = "ollama_backtest_analyst_v1"
+OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION = "ollama_backtest_analyst_v2"
 
 _SYSTEM_PROMPT = """You are a cautious investment research analyst reviewing a simulated backtest.
 
 STRICT RULES — follow all:
 1. Do NOT invent trades, prices, or symbols absent from the input.
-2. Do NOT claim causality beyond what the data shows.
+2. Do NOT claim causality beyond what the data shows; use cautious phrasing (e.g. "may",
+  "consistent with").
 3. Do NOT give personalized financial advice or recommend real trades.
 4. If assumptions_json shows seeded/synthetic recommendations, state this in data_quality_warnings.
 5. Distinguish "outperformed benchmark in this simulation" from "strategy is proven to work".
 6. Warn about overfitting in risk_notes when total_trades < 10.
 7. Set confidence (0.0–1.0) based on data quality and sample size.
+
+NUMERIC GUARDRAILS — performance wording:
+- When stating returns, drawdown, cash, trade counts, or profit/loss, use ONLY the strings in
+  display_metrics as formatted. Treat them as the single source of truth.
+- Do NOT recompute or convert percentages from raw fields (total_return_pct, etc.).
+- Do NOT say "outperformed by X%" or "underperformed by X%" unless that exact phrase appears in
+  display_metrics (it will not for relative performance — see below).
+- Relative performance vs the benchmark must use relative_return_display only. It is in
+  **percentage points** (not percent of benchmark). Examples: "X percentage points ahead of the
+  benchmark", "X percentage points behind the benchmark". Never treat relative_return_pct as a
+  ratio (e.g. never turn a spread into "169%").
+- For plain_english_summary and performance_drivers, use **only** display_metrics strings for
+  numbers; do not derive new figures.
+
+HEADLINE FIELD:
+- Set "headline" to the exact deterministic_headline from the input (copy verbatim including
+  punctuation). The server may still replace it for product safety.
+
+DRAWDOWN / TRADES:
+- Do not claim that a specific trade prevented or caused a drawdown unless the input explicitly ties
+  that event to the drawdown.
 
 Return ONLY valid JSON matching this exact schema — no prose outside the JSON:
 {
@@ -57,6 +79,115 @@ Return ONLY valid JSON matching this exact schema — no prose outside the JSON:
   "data_quality_warnings": ["string"],
   "confidence": 0.5
 }"""
+
+
+def _format_currency(amount: float) -> str:
+    return f"${amount:,.2f}"
+
+
+def _format_signed_currency(delta: float) -> str:
+    sign = "+" if delta >= 0 else "-"
+    return f"{sign}${abs(delta):,.2f}"
+
+
+def _format_signed_pct(rate: float | None) -> str:
+    if rate is None:
+        return "N/A"
+    pct = rate * 100.0
+    sign = "+" if pct > 0 else ""
+    return f"{sign}{pct:.2f}%"
+
+
+def _format_relative_pp(rate: float | None) -> str:
+    if rate is None:
+        return "N/A"
+    pp = rate * 100.0
+    sign = "+" if pp > 0 else ""
+    return f"{sign}{pp:.2f} percentage points"
+
+
+def _format_drawdown(rate: float | None) -> str:
+    if rate is None:
+        return "N/A"
+    pct = rate * 100.0
+    sign = "+" if pct > 0 else ""
+    return f"{sign}{pct:.2f}%"
+
+
+def _build_deterministic_headline(
+    *,
+    advisor_return_display: str,
+    benchmark_symbol: str | None,
+    benchmark_return_display: str,
+    relative_return_display: str,
+) -> str:
+    bench_label = (benchmark_symbol or "benchmark").strip() or "benchmark"
+    if benchmark_return_display == "N/A":
+        return f"Advisor return {advisor_return_display}."
+    if relative_return_display == "N/A":
+        return (
+            f"Advisor return {advisor_return_display} vs {bench_label} "
+            f"{benchmark_return_display}."
+        )
+    return (
+        f"Advisor return {advisor_return_display} vs {bench_label} "
+        f"{benchmark_return_display} ({relative_return_display})."
+    )
+
+
+def build_display_metrics(run: AdvisorBacktestRun) -> dict[str, str]:
+    """Pre-formatted metrics for the LLM (single source of truth for display copy)."""
+    initial = float(run.initial_cash)
+    final = float(run.final_equity) if run.final_equity is not None else None
+    pnl = round(final - initial, 4) if final is not None else None
+
+    advisor_ret = _format_signed_pct(
+        float(run.total_return_pct) if run.total_return_pct is not None else None
+    )
+    bench_ret = (
+        "N/A"
+        if run.benchmark_return_pct is None
+        else _format_signed_pct(float(run.benchmark_return_pct))
+    )
+    rel_ret = (
+        "N/A"
+        if run.relative_return_pct is None
+        else _format_relative_pp(float(run.relative_return_pct))
+    )
+
+    return {
+        "initial_cash_display": _format_currency(initial),
+        "final_equity_display": _format_currency(final) if final is not None else "N/A",
+        "profit_loss_display": _format_signed_currency(pnl) if pnl is not None else "N/A",
+        "advisor_return_display": advisor_ret,
+        "benchmark_return_display": bench_ret,
+        "relative_return_display": rel_ret,
+        "max_drawdown_display": _format_drawdown(
+            float(run.max_drawdown_pct) if run.max_drawdown_pct is not None else None
+        ),
+        "total_trades_display": str(int(run.total_trades)),
+    }
+
+
+def current_ollama_analysis_cache_filter(settings: Settings) -> tuple[Any, ...]:
+    """Predicates so cached analyses match provider, model, and prompt generation."""
+    return (
+        AdvisorBacktestAnalysis.provider == "ollama",
+        AdvisorBacktestAnalysis.model == settings.ollama_model,
+        AdvisorBacktestAnalysis.prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION,
+    )
+
+
+def _apply_deterministic_headline(
+    analysis: dict[str, Any],
+    *,
+    deterministic_headline: str,
+) -> None:
+    """Overwrite headline; preserve model output as model_headline in-place."""
+    prior = analysis.get("headline")
+    if isinstance(prior, str) and prior.strip():
+        analysis["model_headline"] = prior
+    analysis["headline"] = deterministic_headline
 
 
 def _sample_equity_points(
@@ -129,6 +260,14 @@ def build_prompt_input(run: AdvisorBacktestRun) -> dict[str, Any]:
     final = float(run.final_equity) if run.final_equity is not None else None
     pnl = round(final - initial, 4) if final is not None else None
 
+    display_metrics = build_display_metrics(run)
+    deterministic_headline = _build_deterministic_headline(
+        advisor_return_display=display_metrics["advisor_return_display"],
+        benchmark_symbol=run.benchmark_symbol,
+        benchmark_return_display=display_metrics["benchmark_return_display"],
+        relative_return_display=display_metrics["relative_return_display"],
+    )
+
     return {
         "start_date": str(run.start_date),
         "end_date": str(run.end_date),
@@ -155,6 +294,8 @@ def build_prompt_input(run: AdvisorBacktestRun) -> dict[str, Any]:
         "assumptions_json": run.assumptions_json,
         "trades": trades_compact,
         "equity_summary": _sample_equity_points(all_equity),
+        "display_metrics": display_metrics,
+        "deterministic_headline": deterministic_headline,
     }
 
 
@@ -197,13 +338,15 @@ async def generate_advisor_backtest_analysis(
     if run is None:
         raise ValueError("Advisor backtest run not found.")
 
-    # 2. Return existing COMPLETED analysis when force=False
+    # 2. Return existing COMPLETED analysis when force=False (same provider, model, prompt version)
     if not force:
+        cache_filters = current_ollama_analysis_cache_filter(settings)
         existing_result = await session.execute(
             select(AdvisorBacktestAnalysis)
             .where(
                 AdvisorBacktestAnalysis.advisor_backtest_run_id == advisor_backtest_run_id,
                 AdvisorBacktestAnalysis.status == "COMPLETED",
+                *cache_filters,
             )
             .order_by(AdvisorBacktestAnalysis.created_at.desc())
             .limit(1)
@@ -218,6 +361,7 @@ async def generate_advisor_backtest_analysis(
 
     # 4. Build prompt
     prompt_input = build_prompt_input(run)
+    deterministic_headline = str(prompt_input["deterministic_headline"])
     client = OllamaClient(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
@@ -241,7 +385,7 @@ async def generate_advisor_backtest_analysis(
             advisor_backtest_run_id=advisor_backtest_run_id,
             provider="ollama",
             model=settings.ollama_model,
-            prompt_version=_PROMPT_VERSION,
+            prompt_version=OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION,
             status="FAILED",
             analysis_json={},
             prompt_input_json=prompt_input,
@@ -255,14 +399,20 @@ async def generate_advisor_backtest_analysis(
         )
         raise exc
 
+    analysis_payload = parsed.model_dump()
+    _apply_deterministic_headline(
+        analysis_payload,
+        deterministic_headline=deterministic_headline,
+    )
+
     analysis = AdvisorBacktestAnalysis(
         user_id=user_id,
         advisor_backtest_run_id=advisor_backtest_run_id,
         provider="ollama",
         model=settings.ollama_model,
-        prompt_version=_PROMPT_VERSION,
+        prompt_version=OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION,
         status="COMPLETED",
-        analysis_json=parsed.model_dump(),
+        analysis_json=analysis_payload,
         prompt_input_json=prompt_input,
         error_message=None,
     )

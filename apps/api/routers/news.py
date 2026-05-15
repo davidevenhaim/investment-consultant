@@ -22,7 +22,9 @@ async def latest_news(
 ) -> dict[str, Any]:
     """Return the most recent persisted news articles for a symbol."""
     repo = NewsItemRepository(db)
-    since = dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
+    end_date = dt.datetime.now(dt.UTC).date()
+    start_date = end_date - dt.timedelta(days=days)
+    since = dt.datetime.combine(start_date, dt.time.min, tzinfo=dt.UTC)
     items = await repo.get_recent(
         symbol=symbol.upper(),
         since=since,

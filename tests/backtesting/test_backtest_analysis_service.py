@@ -13,7 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from local_llm.schemas import OllamaConnectionError, OllamaParseError
-from local_llm.service import _sample_equity_points, build_prompt_input
+from local_llm.service import (
+    _SYSTEM_PROMPT,
+    OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION,
+    _sample_equity_points,
+    build_prompt_input,
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -79,7 +84,7 @@ def _make_run(
 
 def _valid_analysis_dict() -> dict[str, Any]:
     return {
-        "headline": "Strategy gained 10%",
+        "headline": "Outperformed benchmark by 169%",
         "plain_english_summary": "The advisor made money.",
         "performance_drivers": [{"title": "AAPL", "explanation": "went up", "symbols": ["AAPL"]}],
         "risk_notes": [{"title": "Small sample", "explanation": "only 3 trades", "severity": "HIGH"}],
@@ -143,6 +148,55 @@ def test_build_prompt_input_includes_summary_fields() -> None:
     assert inp["winning_trades"] == 2
     assert inp["benchmark_symbol"] == "SPY"
     assert "assumptions_json" in inp
+    assert "display_metrics" in inp
+    assert "deterministic_headline" in inp
+
+
+def test_build_prompt_input_display_metrics_formatted() -> None:
+    run = _make_run()
+    run.total_return_pct = 0.2543
+    run.benchmark_return_pct = 0.0851
+    run.relative_return_pct = 0.1692
+    run.max_drawdown_pct = -0.0319
+    run.initial_cash = 10_000.0
+    run.final_equity = 12_543.53
+    dm = build_prompt_input(run)["display_metrics"]
+    assert dm["initial_cash_display"] == "$10,000.00"
+    assert dm["final_equity_display"] == "$12,543.53"
+    assert dm["profit_loss_display"] == "+$2,543.53"
+    assert dm["advisor_return_display"] == "+25.43%"
+    assert dm["benchmark_return_display"] == "+8.51%"
+    assert dm["relative_return_display"] == "+16.92 percentage points"
+    assert dm["max_drawdown_display"] == "-3.19%"
+    assert dm["total_trades_display"] == "3"
+
+
+def test_build_prompt_input_display_metrics_na_without_benchmark() -> None:
+    run = _make_run()
+    run.benchmark_return_pct = None
+    run.relative_return_pct = None
+    dm = build_prompt_input(run)["display_metrics"]
+    assert dm["benchmark_return_display"] == "N/A"
+    assert dm["relative_return_display"] == "N/A"
+
+
+def test_build_prompt_input_deterministic_headline_matches_expected() -> None:
+    run = _make_run()
+    run.total_return_pct = 0.2543
+    run.benchmark_return_pct = 0.0851
+    run.relative_return_pct = 0.1692
+    inp = build_prompt_input(run)
+    assert (
+        inp["deterministic_headline"]
+        == "Advisor return +25.43% vs SPY +8.51% (+16.92 percentage points)."
+    )
+
+
+def test_system_prompt_includes_numeric_guardrails() -> None:
+    assert "display_metrics" in _SYSTEM_PROMPT
+    assert "percentage points" in _SYSTEM_PROMPT
+    assert "Do NOT recompute" in _SYSTEM_PROMPT
+    assert "deterministic_headline" in _SYSTEM_PROMPT
 
 
 def test_build_prompt_input_includes_trades() -> None:
@@ -262,7 +316,7 @@ async def test_service_returns_existing_when_force_false(db_session: Any, monkey
         advisor_backtest_run_id=run.id,
         provider="ollama",
         model="llama3.1:8b",
-        prompt_version="ollama_backtest_analyst_v1",
+        prompt_version=OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION,
         status="COMPLETED",
         analysis_json={"headline": "existing"},
         prompt_input_json={},
@@ -280,6 +334,54 @@ async def test_service_returns_existing_when_force_false(db_session: Any, monkey
 
     mock_cls.assert_not_called()
     assert result.analysis_json == {"headline": "existing"}
+    assert result.prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
+
+
+@pytest.mark.asyncio
+async def test_service_v1_completed_not_reused_when_prompt_is_v2(
+    db_session: Any, monkeypatch: Any
+) -> None:
+    """Stale v1 cache must not satisfy force=false after upgrading to v2."""
+    from db.models import AdvisorBacktestAnalysis
+    from local_llm.service import generate_advisor_backtest_analysis
+
+    monkeypatch.setenv("OLLAMA_ENABLED", "true")
+    from core.config import get_settings
+    get_settings.cache_clear()
+
+    user_id = uuid.uuid4()
+    run = await _seed_run(db_session, user_id)
+    existing = AdvisorBacktestAnalysis(
+        user_id=user_id,
+        advisor_backtest_run_id=run.id,
+        provider="ollama",
+        model="llama3.1:8b",
+        prompt_version="ollama_backtest_analyst_v1",
+        status="COMPLETED",
+        analysis_json={"headline": "old v1"},
+        prompt_input_json={},
+    )
+    db_session.add(existing)
+    await db_session.flush()
+
+    mock_client = AsyncMock()
+    mock_client.chat_json = AsyncMock(return_value=_valid_analysis_dict())
+
+    with patch("local_llm.service.OllamaClient", return_value=mock_client):
+        result = await generate_advisor_backtest_analysis(
+            session=db_session,
+            user_id=user_id,
+            advisor_backtest_run_id=run.id,
+            force=False,
+        )
+
+    mock_client.chat_json.assert_called_once()
+    assert result.prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
+    assert (
+        result.analysis_json["headline"]
+        == "Advisor return +10.00% vs SPY +5.00% (+5.00 percentage points)."
+    )
+    assert result.analysis_json.get("model_headline") == "Outperformed benchmark by 169%"
 
 
 @pytest.mark.asyncio
@@ -305,7 +407,12 @@ async def test_service_regenerates_when_force_true(db_session: Any, monkeypatch:
         )
 
     assert result.status == "COMPLETED"
-    assert result.analysis_json["headline"] == "Strategy gained 10%"
+    assert (
+        result.analysis_json["headline"]
+        == "Advisor return +10.00% vs SPY +5.00% (+5.00 percentage points)."
+    )
+    assert result.analysis_json.get("model_headline") == "Outperformed benchmark by 169%"
+    assert result.prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
     mock_client.chat_json.assert_called_once()
 
 
@@ -378,6 +485,7 @@ async def test_service_connection_error_persists_failed_row(
     assert len(rows) == 1
     assert rows[0].status == "FAILED"
     assert "refused" in (rows[0].error_message or "")
+    assert rows[0].prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
 
 
 @pytest.mark.asyncio
@@ -414,6 +522,7 @@ async def test_service_parse_error_persists_failed_row(
     ).scalars().all()
     assert len(rows) == 1
     assert rows[0].status == "FAILED"
+    assert rows[0].prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
 
 
 @pytest.mark.asyncio
@@ -443,6 +552,13 @@ async def test_service_successful_call_stores_completed_row(
 
     assert result.status == "COMPLETED"
     assert result.analysis_json["confidence"] == 0.6
+    assert (
+        result.analysis_json["headline"]
+        == "Advisor return +10.00% vs SPY +5.00% (+5.00 percentage points)."
+    )
+    assert result.prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
+    assert result.analysis_json.get("model_headline") == "Outperformed benchmark by 169%"
+    assert "display_metrics" in result.prompt_input_json
 
     rows = (
         await db_session.execute(

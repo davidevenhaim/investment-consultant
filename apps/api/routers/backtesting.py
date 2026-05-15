@@ -6,6 +6,7 @@ from typing import Any
 from backtesting.advisor_simulation import run_advisor_backtest
 from backtesting.repository import LearningEventRepository, RecommendationOutcomeRepository
 from backtesting.service import measure_latest_recommendations
+from core.config import get_settings
 from core.responses import api_response
 from db.models import AdvisorBacktestAnalysis, AdvisorBacktestRun
 from db.schemas import (
@@ -22,7 +23,10 @@ from db.schemas import (
 from db.session import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from local_llm.schemas import OllamaConnectionError, OllamaDisabledError, OllamaParseError
-from local_llm.service import generate_advisor_backtest_analysis
+from local_llm.service import (
+    current_ollama_analysis_cache_filter,
+    generate_advisor_backtest_analysis,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -313,11 +317,13 @@ async def get_advisor_backtest_analysis(
     if run_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Advisor backtest run not found.")
 
+    settings = get_settings()
     result = await db.execute(
         select(AdvisorBacktestAnalysis)
         .where(
             AdvisorBacktestAnalysis.advisor_backtest_run_id == rid,
             AdvisorBacktestAnalysis.status == "COMPLETED",
+            *current_ollama_analysis_cache_filter(settings),
         )
         .order_by(AdvisorBacktestAnalysis.created_at.desc())
         .limit(1)
