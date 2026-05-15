@@ -23,6 +23,49 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# ── Deterministic display-string helpers ──────────────────────────────────────
+
+
+def _fmt_currency(amount: float) -> str:
+    """Format a non-negative dollar amount: '$12,543.53'."""
+    return f"${amount:,.2f}"
+
+
+def _fmt_signed_currency(delta: float) -> str:
+    """Format a signed dollar amount: '+$2,543.53' or '-$123.45'."""
+    if delta >= 0:
+        return f"+${delta:,.2f}"
+    return f"-${abs(delta):,.2f}"
+
+
+def _fmt_signed_pct(rate: float | None) -> str:
+    """Format a rate as a signed percentage (0.25 → '+25.00%'). Returns 'N/A' if None."""
+    if rate is None:
+        return "N/A"
+    sign = "+" if rate >= 0 else ""
+    return f"{sign}{rate * 100:.2f}%"
+
+
+def _fmt_relative_pp(rate: float | None) -> str:
+    """Format a relative return rate in percentage points.
+
+    Example: 0.1692 → '+16.92 percentage points'.
+    Returns 'N/A' if None.
+    """
+    if rate is None:
+        return "N/A"
+    sign = "+" if rate >= 0 else ""
+    return f"{sign}{rate * 100:.2f} percentage points"
+
+
+def _fmt_drawdown(rate: float | None) -> str:
+    """Format a drawdown rate (typically negative): '-3.19%'. Returns 'N/A' if None."""
+    if rate is None:
+        return "N/A"
+    return f"{rate * 100:.2f}%"
+
+
 # ── Action → target portfolio weight mapping ──────────────────────────────────
 
 _TARGET_WEIGHTS: dict[str, float] = {
@@ -221,6 +264,162 @@ def _replay_apply_executed_trade(state: _SimState, t: dict[str, Any]) -> None:
         raise ValueError(msg)
 
 
+# ── Enriched summary builder ──────────────────────────────────────────────────
+
+
+def _build_enriched_summary(
+    *,
+    initial_cash: float,
+    final_equity: float,
+    total_return: float,
+    max_drawdown: float,
+    bench_return: float | None,
+    relative_return: float | None,
+    bench_symbol: str,
+    last_cash: float,
+    last_pos_val: float,
+    winning: int,
+    losing: int,
+    skipped: int,
+    actual_trades: int,
+    trade_dicts: list[dict[str, Any]],
+    curve_state: _SimState,
+    bars_by_symbol: dict[str, dict[dt.date, float]],
+    end_date: dt.date,
+    start_date: dt.date,
+) -> dict[str, Any]:
+    """Build the full deterministic summary dict persisted in summary_json."""
+    pnl_amount = final_equity - initial_cash
+    traded_symbols = list({t["symbol"] for t in trade_dicts if t["trade_type"] != "SKIP"})
+
+    from_str = start_date.strftime("%Y-%m-%d")
+    to_str = end_date.strftime("%Y-%m-%d")
+    human_summary = (
+        f"Following the advisor from {from_str} to {to_str} would have turned "
+        f"${initial_cash:,.2f} into ${final_equity:,.2f} "
+        f"({'+' if total_return >= 0 else ''}{total_return:.1%} return)."
+    )
+
+    # ── trade_breakdown & skip_breakdown ───────────────────────────────────────
+    trade_breakdown: dict[str, int] = {}
+    skip_breakdown: dict[str, int] = {}
+    for t in trade_dicts:
+        tt = t["trade_type"]
+        trade_breakdown[tt] = trade_breakdown.get(tt, 0) + 1
+        if tt == "SKIP":
+            reason = str(t.get("reason") or "unknown")
+            skip_breakdown[reason] = skip_breakdown.get(reason, 0) + 1
+
+    # ── open_positions (from final curve_state) ────────────────────────────────
+    open_positions: list[dict[str, Any]] = []
+    for sym, pos in curve_state.positions.items():
+        if pos.qty <= 0.0:
+            continue
+        last_p = _latest_price_on_or_before(end_date, bars_by_symbol, sym)
+        mv = pos.qty * last_p if last_p is not None else 0.0
+        cost_basis_total = pos.qty * pos.avg_cost
+        unreal_pnl = mv - cost_basis_total if last_p is not None else 0.0
+        unreal_ret = unreal_pnl / cost_basis_total if cost_basis_total > 0 else 0.0
+        weight = mv / final_equity if final_equity > 0 else 0.0
+        open_positions.append({
+            "symbol": sym,
+            "quantity": round(pos.qty, 6),
+            "avg_cost": round(pos.avg_cost, 4),
+            "last_price": round(last_p, 4) if last_p is not None else None,
+            "market_value": round(mv, 4),
+            "unrealized_pnl": round(unreal_pnl, 4),
+            "unrealized_return_pct": round(unreal_ret, 6),
+            "weight": round(weight, 6),
+        })
+    open_positions.sort(key=lambda x: x["market_value"], reverse=True)
+
+    # ── closed_positions (from SELL / REDUCE trade rows) ──────────────────────
+    closed_positions: list[dict[str, Any]] = []
+    for t in trade_dicts:
+        if t["trade_type"] not in ("SELL", "REDUCE"):
+            continue
+        raw = t.get("raw_json") or {}
+        pnl: float | None = raw.get("pnl")
+        avg_cost: float | None = raw.get("avg_cost")
+        qty = float(t["quantity"] or 0.0)
+        exit_price = float(t["price"] or 0.0)
+        cost_basis = qty * avg_cost if avg_cost is not None else None
+        ret: float | None = (
+            pnl / cost_basis
+            if (pnl is not None and cost_basis is not None and cost_basis > 0)
+            else None
+        )
+        closed_positions.append({
+            "symbol": t["symbol"],
+            "trade_type": t["trade_type"],
+            "quantity": round(qty, 6),
+            "entry_avg_cost": round(avg_cost, 4) if avg_cost is not None else None,
+            "exit_price": round(exit_price, 4),
+            "realized_pnl": round(pnl, 4) if pnl is not None else None,
+            "realized_return_pct": round(ret, 6) if ret is not None else None,
+        })
+
+    # ── best / worst realized trades ──────────────────────────────────────────
+    scored = [c for c in closed_positions if c["realized_pnl"] is not None]
+    best_realized_trade: dict[str, Any] | None = None
+    worst_realized_trade: dict[str, Any] | None = None
+    if scored:
+        best_realized_trade = max(scored, key=lambda x: x["realized_pnl"])
+        worst_realized_trade = min(scored, key=lambda x: x["realized_pnl"])
+
+    # ── top open position (by market_value) ────────────────────────────────────
+    top_open_position: dict[str, Any] | None = open_positions[0] if open_positions else None
+
+    # ── benchmark_summary ─────────────────────────────────────────────────────
+    benchmark_summary: dict[str, Any] = {
+        "benchmark_symbol": bench_symbol,
+        "benchmark_return_pct": round(bench_return, 8) if bench_return is not None else None,
+        "relative_return_pct": round(relative_return, 8) if relative_return is not None else None,
+        "outperformed_benchmark": (
+            bool(relative_return > 0) if relative_return is not None else None
+        ),
+    }
+
+    return {
+        # ── legacy fields (backwards compat) ──────────────────────────────────
+        "initial_cash": round(initial_cash, 4),
+        "final_equity": round(final_equity, 4),
+        "profit_loss_amount": round(pnl_amount, 4),
+        "total_return_pct": round(total_return, 8),
+        "benchmark_return_pct": round(bench_return, 8) if bench_return is not None else None,
+        "relative_return_pct": round(relative_return, 8) if relative_return is not None else None,
+        "max_drawdown_pct": round(max_drawdown, 8),
+        "total_trades": actual_trades,
+        "winning_trades": winning,
+        "losing_trades": losing,
+        "skipped_recommendations": skipped,
+        "traded_symbols": traded_symbols,
+        "human_summary": human_summary,
+        # ── display strings ────────────────────────────────────────────────────
+        "profit_loss_display": _fmt_signed_currency(pnl_amount),
+        "total_return_display": _fmt_signed_pct(total_return),
+        "benchmark_return_display": _fmt_signed_pct(bench_return),
+        "relative_return_display": _fmt_relative_pp(relative_return),
+        "max_drawdown_display": _fmt_drawdown(max_drawdown),
+        # ── final portfolio state ──────────────────────────────────────────────
+        "final_cash": round(last_cash, 4),
+        "final_cash_display": _fmt_currency(max(last_cash, 0.0)),
+        "final_positions_value": round(last_pos_val, 4),
+        "final_positions_value_display": _fmt_currency(last_pos_val),
+        # ── position details ──────────────────────────────────────────────────
+        "open_positions": open_positions,
+        "closed_positions": closed_positions,
+        "best_realized_trade": best_realized_trade,
+        "worst_realized_trade": worst_realized_trade,
+        "top_open_position": top_open_position,
+        # ── trade analysis ────────────────────────────────────────────────────
+        "trade_breakdown": trade_breakdown,
+        "skip_breakdown": skip_breakdown,
+        # ── benchmark ─────────────────────────────────────────────────────────
+        "benchmark_summary": benchmark_summary,
+    }
+
+
 # ── Main simulation engine ─────────────────────────────────────────────────────
 
 
@@ -380,8 +579,9 @@ async def run_advisor_backtest(
                 ))
                 skipped += 1
                 continue
+            avg_cost_at_exit = pos.avg_cost
             proceeds = pos_qty_before * exec_price
-            pnl = proceeds - pos_qty_before * pos.avg_cost
+            pnl = proceeds - pos_qty_before * avg_cost_at_exit
             if pnl > 0:
                 winning += 1
             elif pnl < 0:
@@ -396,7 +596,7 @@ async def run_advisor_backtest(
                 action=action, trade_type="SELL", trade_date=trade_date_dt,
                 price=exec_price, quantity=pos_qty_before,
                 cash_delta=proceeds, position_before=pos_qty_before, position_after=0.0,
-                raw={"pnl": round(pnl, 4)},
+                raw={"pnl": round(pnl, 4), "avg_cost": round(avg_cost_at_exit, 4)},
             ))
 
         elif action == "REDUCE":
@@ -429,7 +629,7 @@ async def run_advisor_backtest(
                 price=exec_price, quantity=sell_qty,
                 cash_delta=proceeds, position_before=pos_qty_before,
                 position_after=pos.qty,
-                raw={"pnl": round(pnl, 4)},
+                raw={"pnl": round(pnl, 4), "avg_cost": round(pos.avg_cost, 4)},
             ))
 
         elif action in _BUY_ACTIONS:
@@ -502,6 +702,7 @@ async def run_advisor_backtest(
     equity_point_rows: list[dict[str, Any]] = []
     last_equity = float(initial_cash)
     last_cash = float(initial_cash)
+    last_pos_val = 0.0
     for d in trading_dates:
         while ex_i < len(executed_seq) and executed_seq[ex_i][1]["trade_date"].date() <= d:
             _replay_apply_executed_trade(curve_state, executed_seq[ex_i][1])
@@ -516,6 +717,7 @@ async def run_advisor_backtest(
         last_equity = eq
         last_cash = float(curve_state.cash)
         pos_val = eq - curve_state.cash
+        last_pos_val = max(pos_val, 0.0)
         dd = curve_state.update_drawdown(eq)
 
         bench_val: float | None = None
@@ -554,32 +756,27 @@ async def run_advisor_backtest(
     if not trading_dates and recs:
         status = "INSUFFICIENT_DATA"
 
-    # 10. Build summary
-    traded_symbols = list({t["symbol"] for t in trade_dicts if t["trade_type"] != "SKIP"})
-    pnl_amount = final_equity - initial_cash
-    from_str = start_date.strftime("%Y-%m-%d")
-    to_str = end_date.strftime("%Y-%m-%d")
-    human_summary = (
-        f"Following the advisor from {from_str} to {to_str} would have turned "
-        f"${initial_cash:,.2f} into ${final_equity:,.2f} "
-        f"({'+' if total_return >= 0 else ''}{total_return:.1%} return)."
+    # 10. Build enriched summary
+    summary: dict[str, Any] = _build_enriched_summary(
+        initial_cash=initial_cash,
+        final_equity=final_equity,
+        total_return=total_return,
+        max_drawdown=max_drawdown,
+        bench_return=bench_return,
+        relative_return=relative_return,
+        bench_symbol=benchmark_symbol,
+        last_cash=last_cash,
+        last_pos_val=last_pos_val,
+        winning=winning,
+        losing=losing,
+        skipped=skipped,
+        actual_trades=actual_trades,
+        trade_dicts=trade_dicts,
+        curve_state=curve_state,
+        bars_by_symbol=bars_by_symbol,
+        end_date=end_date,
+        start_date=start_date,
     )
-
-    summary: dict[str, Any] = {
-        "initial_cash": round(initial_cash, 4),
-        "final_equity": round(final_equity, 4),
-        "profit_loss_amount": round(pnl_amount, 4),
-        "total_return_pct": round(total_return, 8),
-        "benchmark_return_pct": round(bench_return, 8) if bench_return is not None else None,
-        "relative_return_pct": round(relative_return, 8) if relative_return is not None else None,
-        "max_drawdown_pct": round(max_drawdown, 8),
-        "total_trades": actual_trades,
-        "winning_trades": winning,
-        "losing_trades": losing,
-        "skipped_recommendations": skipped,
-        "traded_symbols": traded_symbols,
-        "human_summary": human_summary,
-    }
 
     # 11. Persist run
     run = AdvisorBacktestRun(

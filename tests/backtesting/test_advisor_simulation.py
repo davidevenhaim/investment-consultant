@@ -12,6 +12,10 @@ import uuid
 import pytest
 from backtesting.advisor_simulation import (
     _find_price,
+    _fmt_currency,
+    _fmt_relative_pp,
+    _fmt_signed_currency,
+    _fmt_signed_pct,
     _latest_price_on_or_before,
     _Position,
     _replay_apply_executed_trade,
@@ -846,3 +850,262 @@ async def test_summary_json_fields(db_session) -> None:
                 "total_return_pct", "human_summary", "skipped_recommendations"):
         assert key in s, f"Missing key: {key}"
     assert "$10,000.00" in s["human_summary"]
+
+
+# ── M11.5 enriched summary tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_summary_json_includes_trade_and_skip_breakdown(db_session) -> None:
+    """trade_breakdown counts every trade_type; skip_breakdown counts by reason."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    # BUY on day 1, HOLD (skip) on day 5
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "HOLD", rec_date=start + dt.timedelta(days=5)
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    s = run.summary_json
+    assert "trade_breakdown" in s
+    assert "skip_breakdown" in s
+
+    tb = s["trade_breakdown"]
+    assert tb.get("BUY") == 1
+    assert tb.get("SKIP", 0) >= 1
+
+    sb = s["skip_breakdown"]
+    # HOLD generates a "hold_or_no_action" skip reason
+    assert sb.get("hold_or_no_action", 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_summary_json_final_cash_and_positions_match_last_equity_point(db_session) -> None:
+    """summary_json.final_cash and final_positions_value match last equity_point."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.002)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    last_ep = max(run.equity_points, key=lambda e: e.date)
+    s = run.summary_json
+
+    assert abs(s["final_cash"] - float(last_ep.cash)) < 0.01
+    assert abs(s["final_positions_value"] - float(last_ep.positions_value)) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_summary_json_open_positions_after_buy_and_reduce(db_session) -> None:
+    """open_positions contains the partially-reduced position at end."""
+    uid = uuid.uuid4()
+    d_buy = dt.date(2024, 3, 1)
+    d_reduce = dt.date(2024, 3, 15)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", d_buy - dt.timedelta(days=5), n=70, dr=0.0)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=d_buy)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "REDUCE", rec_date=d_reduce)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=d_buy, end_date=end, initial_cash=10_000.0,
+    )
+
+    s = run.summary_json
+    assert "open_positions" in s
+    op = s["open_positions"]
+    assert len(op) == 1, "one symbol should remain partially open after REDUCE"
+    pos = op[0]
+    assert pos["symbol"] == "AAPL"
+    assert pos["quantity"] > 0.0
+    assert pos["avg_cost"] > 0.0
+    assert pos["market_value"] > 0.0
+    assert "unrealized_pnl" in pos
+    assert "weight" in pos
+    assert "last_price" in pos
+
+    # top_open_position should point to the same AAPL entry
+    assert s["top_open_position"] is not None
+    assert s["top_open_position"]["symbol"] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_summary_json_closed_positions_after_sell(db_session) -> None:
+    """closed_positions contains the SELL trade with realized_pnl."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    d_sell = start + dt.timedelta(days=7)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=70, dr=0.0)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "SELL", rec_date=d_sell)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    s = run.summary_json
+    assert "closed_positions" in s
+    cp = s["closed_positions"]
+    assert len(cp) == 1
+    c = cp[0]
+    assert c["symbol"] == "AAPL"
+    assert c["trade_type"] == "SELL"
+    assert c["quantity"] > 0.0
+    assert c["entry_avg_cost"] is not None
+    assert c["exit_price"] > 0.0
+    assert c["realized_pnl"] is not None
+    # flat price → realized_pnl should be ≈ 0
+    assert abs(c["realized_pnl"]) < 1.0
+
+    # no open positions remain
+    assert s["open_positions"] == []
+    assert s["top_open_position"] is None
+
+
+@pytest.mark.asyncio
+async def test_summary_json_best_and_worst_realized_trade(db_session) -> None:
+    """best/worst realized trade fields reflect highest and lowest realized_pnl."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 5, 30)
+
+    # Rising price: AAPL winner, flat price: NVDA breakeven
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=90, dr=0.005)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=90, dr=0.0)
+
+    d_buy1 = start
+    d_sell1 = start + dt.timedelta(days=20)
+    d_buy2 = start + dt.timedelta(days=5)
+    d_sell2 = start + dt.timedelta(days=25)
+
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=d_buy1)
+    await _seed_completed_run_with_rec(db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=d_buy2)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "SELL", rec_date=d_sell1)
+    await _seed_completed_run_with_rec(db_session, uid, "NVDA", "SELL", rec_date=d_sell2)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+    )
+
+    s = run.summary_json
+    assert s["best_realized_trade"] is not None
+    assert s["worst_realized_trade"] is not None
+    best = s["best_realized_trade"]
+    worst = s["worst_realized_trade"]
+    assert best["realized_pnl"] >= worst["realized_pnl"]
+
+    # AAPL has rising price → winner; NVDA flat → roughly breakeven / smaller
+    assert best["symbol"] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_summary_json_benchmark_summary_with_spy(db_session) -> None:
+    """benchmark_summary is populated when SPY bars exist."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.003)
+    await _seed_market_bars(db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+    )
+
+    s = run.summary_json
+    assert "benchmark_summary" in s
+    bs = s["benchmark_summary"]
+    assert bs["benchmark_symbol"] == "SPY"
+    assert bs["benchmark_return_pct"] is not None
+    assert bs["relative_return_pct"] is not None
+    assert isinstance(bs["outperformed_benchmark"], bool)
+
+
+@pytest.mark.asyncio
+async def test_summary_json_benchmark_summary_no_spy_graceful(db_session) -> None:
+    """benchmark_summary is present but null when SPY bars are missing."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+    )
+
+    s = run.summary_json
+    assert "benchmark_summary" in s
+    bs = s["benchmark_summary"]
+    assert bs["benchmark_symbol"] == "SPY"
+    assert bs["benchmark_return_pct"] is None
+    assert bs["relative_return_pct"] is None
+    assert bs["outperformed_benchmark"] is None
+
+
+@pytest.mark.asyncio
+async def test_summary_json_display_strings_format(db_session) -> None:
+    """Display strings are deterministic and use correct formatting conventions."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.005)
+    await _seed_market_bars(db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001)
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+    )
+
+    s = run.summary_json
+
+    # profit_loss_display — starts with "+" or "-" and contains "$"
+    pld = s["profit_loss_display"]
+    assert pld[0] in ("+", "-"), f"profit_loss_display should be signed: {pld!r}"
+    assert "$" in pld
+
+    # total_return_display — ends with "%"
+    assert s["total_return_display"].endswith("%")
+
+    # relative_return_display — contains "percentage points"
+    assert "percentage points" in s["relative_return_display"]
+
+    # max_drawdown_display — ends with "%"
+    assert s["max_drawdown_display"].endswith("%")
+
+    # final_cash_display — starts with "$"
+    assert s["final_cash_display"].startswith("$")
+
+    # verify formatting helpers directly (unit test)
+    assert _fmt_currency(12543.53) == "$12,543.53"
+    assert _fmt_signed_currency(2543.53) == "+$2,543.53"
+    assert _fmt_signed_currency(-123.45) == "-$123.45"
+    assert _fmt_signed_pct(0.2543) == "+25.43%"
+    assert _fmt_signed_pct(-0.031) == "-3.10%"
+    assert _fmt_relative_pp(0.1692) == "+16.92 percentage points"
+    assert _fmt_relative_pp(None) == "N/A"

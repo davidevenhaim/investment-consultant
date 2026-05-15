@@ -243,3 +243,133 @@ async def test_get_nonexistent_run_returns_404(api_client) -> None:
     fake_id = str(uuid.uuid4())
     resp = await api_client.get(f"/api/v1/backtesting/advisor-runs/{fake_id}")
     assert resp.status_code == 404
+
+
+# ── M11.5 enriched summary API tests ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_post_advisor_run_response_includes_enriched_summary(
+    api_client, db_session: AsyncSession
+) -> None:
+    """POST /advisor-runs response summary_json contains all new enriched fields."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.003)
+    await _seed_run_with_rec(
+        db_session, uuid.UUID("00000000-0000-0000-0000-000000000001"), "AAPL", "BUY_CANDIDATE", start
+    )
+
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={"start_date": "2024-03-01", "end_date": "2024-04-30", "initial_cash": 10000},
+    )
+    assert resp.status_code == 201
+    s = resp.json()["data"]["summary_json"]
+
+    # display strings
+    for key in (
+        "profit_loss_display", "total_return_display",
+        "benchmark_return_display", "relative_return_display",
+        "max_drawdown_display", "final_cash_display", "final_positions_value_display",
+    ):
+        assert key in s, f"Missing display key: {key}"
+
+    # portfolio state fields
+    assert "final_cash" in s
+    assert "final_positions_value" in s
+    assert s["final_cash"] + s["final_positions_value"] == pytest.approx(
+        s["final_equity"], rel=1e-4
+    )
+
+    # structural fields
+    assert isinstance(s["open_positions"], list)
+    assert isinstance(s["closed_positions"], list)
+    assert isinstance(s["trade_breakdown"], dict)
+    assert isinstance(s["skip_breakdown"], dict)
+    assert isinstance(s["benchmark_summary"], dict)
+
+    # relative_return uses "percentage points"
+    assert "percentage points" in s["relative_return_display"] or s["relative_return_display"] == "N/A"
+
+    # legacy fields preserved
+    for legacy in ("initial_cash", "final_equity", "total_return_pct", "human_summary"):
+        assert legacy in s, f"Legacy field missing: {legacy}"
+
+
+@pytest.mark.asyncio
+async def test_get_advisor_run_enriched_summary_persisted(
+    api_client, db_session: AsyncSession
+) -> None:
+    """GET /advisor-runs/{id} returns the same enriched summary_json that was stored at creation."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.003)
+    await _seed_run_with_rec(
+        db_session, uuid.UUID("00000000-0000-0000-0000-000000000001"), "AAPL", "BUY_CANDIDATE", start
+    )
+
+    create_resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={"start_date": "2024-03-01", "end_date": "2024-04-30", "initial_cash": 10000},
+    )
+    run_id = create_resp.json()["data"]["id"]
+
+    get_resp = await api_client.get(f"/api/v1/backtesting/advisor-runs/{run_id}")
+    assert get_resp.status_code == 200
+    s = get_resp.json()["data"]["summary_json"]
+
+    for key in (
+        "profit_loss_display", "total_return_display", "trade_breakdown",
+        "skip_breakdown", "open_positions", "closed_positions", "benchmark_summary",
+    ):
+        assert key in s, f"GET response missing enriched key: {key}"
+
+
+@pytest.mark.asyncio
+async def test_enriched_summary_backwards_compatible_shape(
+    api_client, db_session: AsyncSession
+) -> None:
+    """All original summary_json fields are still present in the enriched response."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    await _seed_run_with_rec(
+        db_session, uuid.UUID("00000000-0000-0000-0000-000000000001"), "AAPL", "BUY_CANDIDATE", start
+    )
+
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={"start_date": "2024-03-01", "end_date": "2024-04-30", "initial_cash": 10000},
+    )
+    assert resp.status_code == 201
+    s = resp.json()["data"]["summary_json"]
+
+    legacy_keys = [
+        "initial_cash", "final_equity", "profit_loss_amount", "total_return_pct",
+        "benchmark_return_pct", "relative_return_pct", "max_drawdown_pct",
+        "total_trades", "winning_trades", "losing_trades",
+        "skipped_recommendations", "traded_symbols", "human_summary",
+    ]
+    for key in legacy_keys:
+        assert key in s, f"Backwards-compat: legacy key missing: {key}"
+
+
+@pytest.mark.asyncio
+async def test_enriched_summary_no_user_id_leakage(
+    api_client, db_session: AsyncSession
+) -> None:
+    """summary_json must not contain user_id or other cross-user data."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    user_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    await _seed_run_with_rec(db_session, user_id, "AAPL", "BUY_CANDIDATE", start)
+
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={"start_date": "2024-03-01", "end_date": "2024-04-30", "initial_cash": 10000},
+    )
+    assert resp.status_code == 201
+    s = resp.json()["data"]["summary_json"]
+
+    # summary_json must not contain the user_id string
+    assert str(user_id) not in str(s), "user_id must not appear in summary_json"
+    # No raw recommendation IDs or research run IDs in summary
+    assert "research_run_id" not in str(s)
