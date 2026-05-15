@@ -646,7 +646,7 @@ When asked to build a milestone, always:
 
 ## Current project state
 
-> Last verified: M11 complete. Next: M11.1 — LLM-assisted learning events, or M12 outcome tracking improvements.
+> Last verified: M11.3 complete. Next: M12 outcome tracking improvements.
 
 ### Quality gate (verified before M9.7)
 - `make test` — passing

@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     ibkr_flex_max_polls: int = 10
     ibkr_flex_poll_interval_seconds: int = 3
 
+    # Ollama (local LLM — never sends data to cloud)
+    ollama_enabled: bool = False
+    ollama_base_url: str = "http://host.docker.internal:11434"
+    ollama_model: str = "llama3.1:8b"
+    ollama_timeout_seconds: int = 60
+
     # News
     newsapi_key: str = ""
     news_enabled: bool = False

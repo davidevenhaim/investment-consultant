@@ -57,6 +57,7 @@ __all__ = [
     "AdvisorBacktestRun",
     "AdvisorBacktestTrade",
     "AdvisorBacktestEquityPoint",
+    "AdvisorBacktestAnalysis",
 ]
 
 
@@ -867,6 +868,9 @@ class AdvisorBacktestRun(Base, UUIDMixin, TimestampMixin):
     equity_points: Mapped[list["AdvisorBacktestEquityPoint"]] = relationship(
         "AdvisorBacktestEquityPoint", back_populates="run", cascade="all, delete-orphan"
     )
+    analyses: Mapped[list["AdvisorBacktestAnalysis"]] = relationship(
+        "AdvisorBacktestAnalysis", back_populates="run", cascade="all, delete-orphan"
+    )
 
 
 class AdvisorBacktestTrade(Base, UUIDMixin, TimestampMixin):
@@ -939,4 +943,49 @@ class AdvisorBacktestEquityPoint(Base, UUIDMixin, TimestampMixin):
 
     run: Mapped["AdvisorBacktestRun"] = relationship(
         "AdvisorBacktestRun", back_populates="equity_points"
+    )
+
+
+# ── M11.3: Advisor Backtest Analysis (local Ollama) ───────────────────────────
+
+
+class AdvisorBacktestAnalysis(Base, UUIDMixin, TimestampMixin):
+    """Ollama-generated analysis of one advisor backtest run."""
+
+    __tablename__ = "advisor_backtest_analyses"
+    __table_args__ = (
+        Index("ix_aba_user_id", "user_id"),
+        Index("ix_aba_run_id", "advisor_backtest_run_id"),
+        Index("ix_aba_status", "status"),
+        Index("ix_aba_created_at", "created_at"),
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    advisor_backtest_run_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("advisor_backtest_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="ollama", server_default=text("'ollama'")
+    )
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        default="ollama_backtest_analyst_v1",
+        server_default=text("'ollama_backtest_analyst_v1'"),
+    )
+    # COMPLETED | FAILED
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    analysis_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    prompt_input_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    run: Mapped["AdvisorBacktestRun"] = relationship(
+        "AdvisorBacktestRun", back_populates="analyses"
     )

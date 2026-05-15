@@ -514,3 +514,24 @@ class AdvisorBacktestRunDetailResponse(_OrmBase):
     created_at: datetime
     trades: list[AdvisorBacktestTradeResponse] = []
     equity_points: list[AdvisorBacktestEquityPointResponse] = []
+
+
+# ── Advisor Backtest Analysis (M11.3) ─────────────────────────────────────────
+
+
+class AdvisorBacktestAnalysisRequest(BaseModel):
+    force: bool = False
+
+
+class AdvisorBacktestAnalysisResponse(_OrmBase):
+    id: uuid.UUID
+    advisor_backtest_run_id: uuid.UUID
+    provider: str
+    model: str
+    prompt_version: str
+    status: str
+    analysis_json: dict[str, Any]
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    # user_id intentionally not exposed

@@ -7,8 +7,10 @@ from backtesting.advisor_simulation import run_advisor_backtest
 from backtesting.repository import LearningEventRepository, RecommendationOutcomeRepository
 from backtesting.service import measure_latest_recommendations
 from core.responses import api_response
-from db.models import AdvisorBacktestRun
+from db.models import AdvisorBacktestAnalysis, AdvisorBacktestRun
 from db.schemas import (
+    AdvisorBacktestAnalysisRequest,
+    AdvisorBacktestAnalysisResponse,
     AdvisorBacktestRequest,
     AdvisorBacktestRunDetailResponse,
     AdvisorBacktestRunResponse,
@@ -19,6 +21,8 @@ from db.schemas import (
 )
 from db.session import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from local_llm.schemas import OllamaConnectionError, OllamaDisabledError, OllamaParseError
+from local_llm.service import generate_advisor_backtest_analysis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -225,4 +229,106 @@ async def get_advisor_backtest(
 
     return api_response(
         AdvisorBacktestRunDetailResponse.model_validate(run).model_dump(), request
+    )
+
+
+# ── Advisor backtest analysis (M11.3 — local Ollama) ─────────────────────────
+
+
+@router.post("/advisor-runs/{run_id}/analysis", status_code=200)
+async def create_advisor_backtest_analysis(
+    run_id: str,
+    body: AdvisorBacktestAnalysisRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Generate (or return cached) local Ollama analysis for an advisor backtest run.
+
+    Returns 503 if Ollama is disabled or unreachable.
+    Returns 404 if the run does not exist or belongs to a different user.
+    When force=false and a completed analysis already exists, returns it immediately.
+    """
+    try:
+        rid = _uuid.UUID(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid run_id UUID.") from exc
+
+    try:
+        analysis = await generate_advisor_backtest_analysis(
+            session=db,
+            user_id=current_user.user_id,
+            advisor_backtest_run_id=rid,
+            force=body.force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OllamaDisabledError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is disabled. Set OLLAMA_ENABLED=true and restart the API.",
+        ) from exc
+    except OllamaConnectionError as exc:
+        await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ollama is unavailable: {exc}",
+        ) from exc
+    except OllamaParseError as exc:
+        await db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Ollama returned an unparseable response: {exc}",
+        ) from exc
+
+    await db.commit()
+    return api_response(
+        AdvisorBacktestAnalysisResponse.model_validate(analysis).model_dump(), request
+    )
+
+
+@router.get("/advisor-runs/{run_id}/analysis")
+async def get_advisor_backtest_analysis(
+    run_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return the latest completed Ollama analysis for an advisor backtest run.
+
+    Returns 404 if no completed analysis exists. Does not call Ollama.
+    """
+    try:
+        rid = _uuid.UUID(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid run_id UUID.") from exc
+
+    # Verify run ownership first
+    run_result = await db.execute(
+        select(AdvisorBacktestRun).where(
+            AdvisorBacktestRun.id == rid,
+            AdvisorBacktestRun.user_id == current_user.user_id,
+        )
+    )
+    if run_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Advisor backtest run not found.")
+
+    result = await db.execute(
+        select(AdvisorBacktestAnalysis)
+        .where(
+            AdvisorBacktestAnalysis.advisor_backtest_run_id == rid,
+            AdvisorBacktestAnalysis.status == "COMPLETED",
+        )
+        .order_by(AdvisorBacktestAnalysis.created_at.desc())
+        .limit(1)
+    )
+    analysis = result.scalar_one_or_none()
+    if analysis is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No completed analysis found for this run. POST to generate one.",
+        )
+
+    return api_response(
+        AdvisorBacktestAnalysisResponse.model_validate(analysis).model_dump(), request
     )
