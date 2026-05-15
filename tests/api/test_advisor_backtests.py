@@ -352,6 +352,177 @@ async def test_enriched_summary_backwards_compatible_shape(
         assert key in s, f"Backwards-compat: legacy key missing: {key}"
 
 
+# ── M11.6 recommendation source filtering API tests ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_api_scenario_source_includes_only_scenario_trades(
+    api_client, db_session: AsyncSession
+) -> None:
+    """POST with recommendation_source=SCENARIO returns only scenario-seeded trades."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+    uid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+    # Scenario rec: AAPL
+    from db.enums import ResearchRunStatus, ResearchRunType
+    from db.models import NeutralRecommendation, ResearchRun
+
+    run_s = ResearchRun(
+        user_id=uid, run_type=ResearchRunType.MANUAL.value,
+        status=ResearchRunStatus.COMPLETED.value,
+        started_at=dt.datetime.combine(start, dt.time(9), tzinfo=dt.UTC),
+        finished_at=dt.datetime.combine(start, dt.time(10), tzinfo=dt.UTC),
+        metadata_json={"scenario_seed": True, "scenario": "test_s"},
+    )
+    db_session.add(run_s)
+    await db_session.flush()
+    rec_dt = dt.datetime.combine(start, dt.time(10), tzinfo=dt.UTC)
+    nr_s = NeutralRecommendation(
+        research_run_id=run_s.id, symbol="AAPL", action="BUY_CANDIDATE",
+        score=70, confidence=0.75, final_reason="s",
+        score_breakdown_json={}, main_reasons_json=[], main_risks_json=[],
+        missing_details_json=[], what_changed_json=[],
+        as_of_time=rec_dt, price_at_recommendation=100.0,
+    )
+    nr_s.created_at = rec_dt  # type: ignore[assignment]
+    db_session.add(nr_s)
+
+    # Real rec: NVDA (no scenario_seed)
+    run_r = ResearchRun(
+        user_id=uid, run_type=ResearchRunType.MANUAL.value,
+        status=ResearchRunStatus.COMPLETED.value,
+        started_at=dt.datetime.combine(start + dt.timedelta(days=1), dt.time(9), tzinfo=dt.UTC),
+        finished_at=dt.datetime.combine(start + dt.timedelta(days=1), dt.time(10), tzinfo=dt.UTC),
+        metadata_json={},
+    )
+    db_session.add(run_r)
+    await db_session.flush()
+    rec_dt2 = dt.datetime.combine(start + dt.timedelta(days=1), dt.time(10), tzinfo=dt.UTC)
+    nr_r = NeutralRecommendation(
+        research_run_id=run_r.id, symbol="NVDA", action="BUY_CANDIDATE",
+        score=70, confidence=0.75, final_reason="r",
+        score_breakdown_json={}, main_reasons_json=[], main_risks_json=[],
+        missing_details_json=[], what_changed_json=[],
+        as_of_time=rec_dt2, price_at_recommendation=100.0,
+    )
+    nr_r.created_at = rec_dt2  # type: ignore[assignment]
+    db_session.add(nr_r)
+    await db_session.flush()
+
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={
+            "start_date": "2024-03-01", "end_date": "2024-04-30",
+            "initial_cash": 10000,
+            "recommendation_source": "SCENARIO",
+            "scenario_name": "test_s",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    s = data["summary_json"]
+    assert s["recommendation_source"] == "SCENARIO"
+    assert s["scenario_name"] == "test_s"
+    assert s["recommendations_considered"] == 1
+
+    buys = [t for t in data["trades"] if t["trade_type"] == "BUY"]
+    assert all(t["symbol"] == "AAPL" for t in buys)
+    assert not any(t["symbol"] == "NVDA" for t in buys)
+
+
+@pytest.mark.asyncio
+async def test_api_real_source_excludes_scenario_trades(
+    api_client, db_session: AsyncSession
+) -> None:
+    """POST with recommendation_source=REAL excludes scenario-seeded recommendations."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+    uid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+    from db.enums import ResearchRunStatus, ResearchRunType
+    from db.models import NeutralRecommendation, ResearchRun
+
+    for sym, meta, delta in [
+        ("AAPL", {"scenario_seed": True, "scenario": "s"}, 0),
+        ("NVDA", {}, 2),
+    ]:
+        r = ResearchRun(
+            user_id=uid, run_type=ResearchRunType.MANUAL.value,
+            status=ResearchRunStatus.COMPLETED.value,
+            started_at=dt.datetime.combine(start + dt.timedelta(days=delta), dt.time(9), tzinfo=dt.UTC),
+            finished_at=dt.datetime.combine(start + dt.timedelta(days=delta), dt.time(10), tzinfo=dt.UTC),
+            metadata_json=meta,
+        )
+        db_session.add(r)
+        await db_session.flush()
+        rdt = dt.datetime.combine(start + dt.timedelta(days=delta), dt.time(10), tzinfo=dt.UTC)
+        nr = NeutralRecommendation(
+            research_run_id=r.id, symbol=sym, action="BUY_CANDIDATE",
+            score=70, confidence=0.75, final_reason="t",
+            score_breakdown_json={}, main_reasons_json=[], main_risks_json=[],
+            missing_details_json=[], what_changed_json=[],
+            as_of_time=rdt, price_at_recommendation=100.0,
+        )
+        nr.created_at = rdt  # type: ignore[assignment]
+        db_session.add(nr)
+    await db_session.flush()
+
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={"start_date": "2024-03-01", "end_date": "2024-04-30", "initial_cash": 10000,
+              "recommendation_source": "REAL"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    s = data["summary_json"]
+    assert s["recommendation_source"] == "REAL"
+    assert s["recommendations_considered"] == 1
+
+    buys = [t for t in data["trades"] if t["trade_type"] == "BUY"]
+    assert all(t["symbol"] == "NVDA" for t in buys)
+    assert not any(t["symbol"] == "AAPL" for t in buys)
+
+
+@pytest.mark.asyncio
+async def test_api_scenario_name_with_real_source_returns_422(api_client) -> None:
+    """POST with scenario_name and recommendation_source=REAL must return 422."""
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={
+            "start_date": "2024-03-01", "end_date": "2024-04-30",
+            "initial_cash": 10000,
+            "recommendation_source": "REAL",
+            "scenario_name": "mixed_buy_reduce_sell",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_api_default_source_all_keeps_existing_behavior(
+    api_client, db_session: AsyncSession
+) -> None:
+    """Default request (no recommendation_source) behaves exactly as before (ALL)."""
+    start = dt.date(2024, 3, 1)
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    await _seed_run_with_rec(
+        db_session, uuid.UUID("00000000-0000-0000-0000-000000000001"), "AAPL", "BUY_CANDIDATE", start
+    )
+
+    resp = await api_client.post(
+        "/api/v1/backtesting/advisor-runs",
+        json={"start_date": "2024-03-01", "end_date": "2024-04-30", "initial_cash": 10000},
+    )
+    assert resp.status_code == 201
+    s = resp.json()["data"]["summary_json"]
+    assert s["recommendation_source"] == "ALL"
+    assert s["scenario_name"] is None
+    assert s["recommendations_considered"] >= 1
+
+
 @pytest.mark.asyncio
 async def test_enriched_summary_no_user_id_leakage(
     api_client, db_session: AsyncSession

@@ -159,6 +159,8 @@ async def create_advisor_backtest(
         initial_cash=body.initial_cash,
         benchmark_symbol=body.benchmark_symbol,
         name=body.name,
+        recommendation_source=body.recommendation_source,
+        scenario_name=body.scenario_name,
     )
     await db.commit()
 

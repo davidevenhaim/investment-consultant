@@ -287,6 +287,9 @@ def _build_enriched_summary(
     bars_by_symbol: dict[str, dict[dt.date, float]],
     end_date: dt.date,
     start_date: dt.date,
+    recommendation_source: str = "ALL",
+    scenario_name: str | None = None,
+    recommendations_considered: int = 0,
 ) -> dict[str, Any]:
     """Build the full deterministic summary dict persisted in summary_json."""
     pnl_amount = final_equity - initial_cash
@@ -417,6 +420,10 @@ def _build_enriched_summary(
         "skip_breakdown": skip_breakdown,
         # ── benchmark ─────────────────────────────────────────────────────────
         "benchmark_summary": benchmark_summary,
+        # ── recommendation source ─────────────────────────────────────────────
+        "recommendation_source": recommendation_source,
+        "scenario_name": scenario_name,
+        "recommendations_considered": recommendations_considered,
     }
 
 
@@ -432,6 +439,8 @@ async def run_advisor_backtest(
     benchmark_symbol: str = "SPY",
     name: str | None = None,
     assumptions: dict[str, Any] | None = None,
+    recommendation_source: str = "ALL",
+    scenario_name: str | None = None,
 ) -> Any:
     """Run a follow-the-advisor simulation and persist results.
 
@@ -454,14 +463,33 @@ async def run_advisor_backtest(
     assumptions_used = assumptions or {}
     assumptions_used["target_weights"] = _TARGET_WEIGHTS
     assumptions_used["price_tolerance_days"] = _PRICE_TOLERANCE_DAYS
+    assumptions_used["recommendation_source"] = recommendation_source
+    assumptions_used["scenario_name"] = scenario_name
 
-    # 1. Fetch all completed user runs in date range
+    # 1. Fetch all completed user runs in date range, with optional source filter
+    from sqlalchemy import not_
+
+    _src = recommendation_source.upper()
+    source_filters = []
+    if _src == "SCENARIO":
+        source_filters.append(ResearchRun.metadata_json.contains({"scenario_seed": True}))
+        if scenario_name:
+            source_filters.append(
+                ResearchRun.metadata_json.contains({"scenario": scenario_name})
+            )
+    elif _src == "REAL":
+        source_filters.append(
+            not_(ResearchRun.metadata_json.contains({"scenario_seed": True}))
+        )
+    # ALL: no extra filters
+
     runs_result = await session.execute(
         select(ResearchRun).where(
             ResearchRun.user_id == user_id,
             ResearchRun.status == ResearchRunStatus.COMPLETED.value,
             ResearchRun.finished_at >= dt.datetime.combine(start_date, dt.time.min, tzinfo=UTC),
             ResearchRun.finished_at <= dt.datetime.combine(end_date, dt.time.max, tzinfo=UTC),
+            *source_filters,
         )
     )
     user_runs = runs_result.scalars().all()
@@ -497,6 +525,9 @@ async def run_advisor_backtest(
         if start_date <= d <= end_date
     )
     trading_dates = sorted(set(all_bar_dates))
+
+    # Snapshot rec count after source filtering (before skipping by date / action)
+    recommendations_considered = len(recs)
 
     # 6. Initialise simulation state
     state = _SimState(cash=initial_cash)
@@ -776,6 +807,9 @@ async def run_advisor_backtest(
         bars_by_symbol=bars_by_symbol,
         end_date=end_date,
         start_date=start_date,
+        recommendation_source=recommendation_source,
+        scenario_name=scenario_name,
+        recommendations_considered=recommendations_considered,
     )
 
     # 11. Persist run

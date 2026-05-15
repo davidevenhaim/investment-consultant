@@ -75,6 +75,7 @@ async def _seed_completed_run_with_rec(
     action: str,
     rec_date: dt.date,
     price: float = 100.0,
+    metadata: dict | None = None,
 ) -> tuple:
     """Return (run, neutral_rec) seeded in DB."""
     from db.enums import ResearchRunStatus, ResearchRunType
@@ -86,6 +87,7 @@ async def _seed_completed_run_with_rec(
         status=ResearchRunStatus.COMPLETED.value,
         started_at=dt.datetime.combine(rec_date, dt.time(9, 0), tzinfo=dt.UTC),
         finished_at=dt.datetime.combine(rec_date, dt.time(10, 0), tzinfo=dt.UTC),
+        metadata_json=metadata or {},
     )
     db_session.add(run)
     await db_session.flush()
@@ -1109,3 +1111,226 @@ async def test_summary_json_display_strings_format(db_session) -> None:
     assert _fmt_signed_pct(-0.031) == "-3.10%"
     assert _fmt_relative_pp(0.1692) == "+16.92 percentage points"
     assert _fmt_relative_pp(None) == "N/A"
+
+
+# ── M11.6 recommendation source filtering tests ───────────────────────────────
+
+_SCENARIO_META = {"scenario_seed": True, "scenario": "test_scenario"}
+_REAL_META: dict = {}  # no scenario_seed
+
+
+@pytest.mark.asyncio
+async def test_source_all_includes_both_scenario_and_real(db_session) -> None:
+    """ALL (default) includes both scenario-seeded and real recommendations."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+
+    # One scenario rec + one real rec on different symbols
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
+    )
+    await _seed_completed_run_with_rec(
+        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        metadata=_REAL_META,
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="ALL",
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    symbols_bought = {t.symbol for t in buys}
+    assert "AAPL" in symbols_bought
+    assert "NVDA" in symbols_bought
+    assert run.summary_json["recommendations_considered"] == 2
+    assert run.summary_json["recommendation_source"] == "ALL"
+
+
+@pytest.mark.asyncio
+async def test_source_scenario_includes_only_scenario_rows(db_session) -> None:
+    """SCENARIO filters to only scenario_seed=True rows; real rows are excluded."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
+    )
+    await _seed_completed_run_with_rec(
+        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        metadata=_REAL_META,
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="SCENARIO",
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    symbols_bought = {t.symbol for t in buys}
+    assert "AAPL" in symbols_bought
+    assert "NVDA" not in symbols_bought
+    assert run.summary_json["recommendations_considered"] == 1
+    assert run.summary_json["recommendation_source"] == "SCENARIO"
+    assert run.summary_json["scenario_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_source_scenario_with_scenario_name_filters_by_name(db_session) -> None:
+    """SCENARIO + scenario_name includes only rows matching that scenario name."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "AMD", start - dt.timedelta(days=5), n=60, dr=0.0)
+
+    # Two different scenario names
+    meta_alpha = {"scenario_seed": True, "scenario": "alpha"}
+    meta_beta = {"scenario_seed": True, "scenario": "beta"}
+
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=meta_alpha
+    )
+    await _seed_completed_run_with_rec(
+        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        metadata=meta_beta,
+    )
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AMD", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=4),
+        metadata=meta_alpha,
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="SCENARIO", scenario_name="alpha",
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    symbols_bought = {t.symbol for t in buys}
+    assert "AAPL" in symbols_bought
+    assert "AMD" in symbols_bought
+    assert "NVDA" not in symbols_bought
+    assert run.summary_json["recommendations_considered"] == 2
+    assert run.summary_json["scenario_name"] == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_source_real_excludes_scenario_rows(db_session) -> None:
+    """REAL filters to only non-scenario rows; scenario_seed=True rows are excluded."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
+    )
+    await _seed_completed_run_with_rec(
+        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        metadata=_REAL_META,
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="REAL",
+    )
+
+    buys = [t for t in run.trades if t.trade_type == "BUY"]
+    symbols_bought = {t.symbol for t in buys}
+    assert "NVDA" in symbols_bought
+    assert "AAPL" not in symbols_bought
+    assert run.summary_json["recommendations_considered"] == 1
+    assert run.summary_json["recommendation_source"] == "REAL"
+
+
+@pytest.mark.asyncio
+async def test_source_scenario_no_matching_rows_graceful(db_session) -> None:
+    """SCENARIO with no matching rows returns a graceful zero-trade run."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    # Only real recs — no scenario rows
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_REAL_META
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="SCENARIO",
+    )
+
+    assert run.status in ("COMPLETED", "INSUFFICIENT_DATA")
+    assert run.total_trades == 0
+    assert float(run.final_equity) == pytest.approx(10_000.0, rel=1e-4)
+    assert run.summary_json["recommendations_considered"] == 0
+
+
+@pytest.mark.asyncio
+async def test_assumptions_json_stores_recommendation_source(db_session) -> None:
+    """assumptions_json contains recommendation_source and scenario_name."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
+    await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
+    )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="SCENARIO", scenario_name="test_scenario",
+    )
+
+    a = run.assumptions_json
+    assert a["recommendation_source"] == "SCENARIO"
+    assert a["scenario_name"] == "test_scenario"
+
+
+@pytest.mark.asyncio
+async def test_summary_json_stores_source_and_recommendations_considered(db_session) -> None:
+    """summary_json contains recommendation_source, scenario_name, recommendations_considered."""
+    uid = uuid.uuid4()
+    start = dt.date(2024, 3, 1)
+    end = dt.date(2024, 4, 30)
+
+    await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.0)
+    await _seed_market_bars(db_session, "NVDA", start - dt.timedelta(days=5), n=60, dr=0.0)
+
+    for sym, meta in [("AAPL", _SCENARIO_META), ("NVDA", _REAL_META)]:
+        await _seed_completed_run_with_rec(
+            db_session, uid, sym, "BUY_CANDIDATE",
+            rec_date=start + dt.timedelta(days=1 if sym == "NVDA" else 0),
+            metadata=meta,
+        )
+
+    run = await run_advisor_backtest(
+        session=db_session, user_id=uid,
+        start_date=start, end_date=end, initial_cash=10_000.0,
+        recommendation_source="SCENARIO", scenario_name="test_scenario",
+    )
+
+    s = run.summary_json
+    assert s["recommendation_source"] == "SCENARIO"
+    assert s["scenario_name"] == "test_scenario"
+    assert s["recommendations_considered"] == 1  # only AAPL passes SCENARIO + test_scenario filter

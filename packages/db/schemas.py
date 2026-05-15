@@ -442,10 +442,16 @@ class AdvisorBacktestRequest(BaseModel):
     initial_cash: float = Field(gt=0)
     benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=20)
     name: str | None = None
+    recommendation_source: Literal["ALL", "SCENARIO", "REAL"] = "ALL"
+    scenario_name: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
         if self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+        if self.scenario_name is not None and self.recommendation_source != "SCENARIO":
+            raise ValueError(
+                "scenario_name is only valid when recommendation_source is 'SCENARIO'"
+            )
 
 
 class AdvisorBacktestRunResponse(_OrmBase):
