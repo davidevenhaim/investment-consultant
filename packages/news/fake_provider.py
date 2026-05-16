@@ -5,6 +5,11 @@ import datetime as dt
 from news.interfaces import NewsProvider
 from news.schemas import NewsArticle
 
+# Dates are relative to now so articles always fall within any reasonable lookback
+# window (default 14 days). Using fixed calendar dates caused flaky failures once
+# the date drifted outside the 14-day window.
+_NOW = dt.datetime.now(dt.UTC)
+
 _FAKE_ARTICLES: dict[str, list[NewsArticle]] = {
     "AAPL": [
         NewsArticle(
@@ -14,7 +19,7 @@ _FAKE_ARTICLES: dict[str, list[NewsArticle]] = {
             description="Apple Inc. reported strong quarterly earnings driven by iPhone sales.",
             source_name="Financial Times",
             author="Jane Doe",
-            published_at=dt.datetime(2026, 5, 1, 9, 0, tzinfo=dt.UTC),
+            published_at=_NOW - dt.timedelta(days=5),
             sentiment_score=0.7,
             relevance_score=0.9,
             importance_score=0.8,
@@ -26,7 +31,7 @@ _FAKE_ARTICLES: dict[str, list[NewsArticle]] = {
             description="Services segment grows 25% year-over-year.",
             source_name="Bloomberg",
             author="John Smith",
-            published_at=dt.datetime(2026, 5, 2, 10, 0, tzinfo=dt.UTC),
+            published_at=_NOW - dt.timedelta(days=3),
             sentiment_score=0.65,
             relevance_score=0.85,
             importance_score=0.75,
@@ -38,7 +43,7 @@ _FAKE_ARTICLES: dict[str, list[NewsArticle]] = {
             description="Analysts warn of potential revenue pressure in key market.",
             source_name="Reuters",
             author=None,
-            published_at=dt.datetime(2026, 5, 3, 11, 0, tzinfo=dt.UTC),
+            published_at=_NOW - dt.timedelta(days=1),
             sentiment_score=-0.4,
             relevance_score=0.8,
             importance_score=0.7,
@@ -52,7 +57,7 @@ _FAKE_ARTICLES: dict[str, list[NewsArticle]] = {
             description="H100 and Blackwell chip demand continues to outpace supply.",
             source_name="CNBC",
             author="Tech Reporter",
-            published_at=dt.datetime(2026, 5, 1, 8, 0, tzinfo=dt.UTC),
+            published_at=_NOW - dt.timedelta(days=4),
             sentiment_score=0.85,
             relevance_score=0.95,
             importance_score=0.9,
