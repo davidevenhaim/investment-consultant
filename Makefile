@@ -1,4 +1,4 @@
-.PHONY: up down migrate migrate-local seed seed-advisor-scenario test test-integration lint format logs shell-api run build venv install memory-reset-dev
+.PHONY: up down migrate migrate-local seed seed-advisor-scenario test test-integration lint format logs shell-api run build venv install memory-reset-dev trigger-scheduled-research
 
 PYTHON    := python3.12
 VENV      := .venv
@@ -76,6 +76,10 @@ shell-worker:
 
 run:
 	$(COMPOSE) exec api python -m apps.cli.run
+
+trigger-scheduled-research:
+	$(COMPOSE) exec -T worker celery -A apps.worker.celery_app call \
+		apps.worker.tasks.research.scheduled_research_task
 
 ps:
 	$(COMPOSE) ps

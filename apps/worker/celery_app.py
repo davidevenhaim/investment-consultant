@@ -25,19 +25,34 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     result_expires=86400,  # 24 hours
-    beat_schedule={
-        "morning-research-run": {
-            "task": "apps.worker.tasks.research.run_scheduled_research",
-            "schedule": crontab(hour=9, minute=0),
-            "kwargs": {"run_type": "morning"},
-        },
-        "evening-research-run": {
-            "task": "apps.worker.tasks.research.run_scheduled_research",
-            "schedule": crontab(hour=16, minute=0),
-            "kwargs": {"run_type": "evening"},
-        },
-    },
 )
+
+
+def _build_beat_schedule() -> dict[str, object]:
+    """Build beat schedule from settings. Parses SCHEDULED_RESEARCH_HOURS as
+    a comma-separated list of UTC hour integers (e.g. "9,16")."""
+    try:
+        hours = [int(h.strip()) for h in settings.scheduled_research_hours.split(",") if h.strip()]
+    except ValueError:
+        logger.warning(
+            "scheduled_research_hours_invalid",
+            value=settings.scheduled_research_hours,
+        )
+        hours = [9, 16]
+
+    minute = settings.scheduled_research_minute
+    schedule: dict[str, object] = {}
+    labels = ["first", "second", "third", "fourth", "fifth"]
+    for i, hour in enumerate(hours):
+        label = labels[i] if i < len(labels) else str(i)
+        schedule[f"scheduled-research-{label}"] = {
+            "task": "apps.worker.tasks.research.scheduled_research_task",
+            "schedule": crontab(hour=hour, minute=minute),
+        }
+    return schedule
+
+
+celery_app.conf.beat_schedule = _build_beat_schedule()
 
 # Alias for CLI invocation: celery -A apps.worker.celery_app worker
 app = celery_app

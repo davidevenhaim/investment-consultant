@@ -26,6 +26,7 @@ from research_graph.runner import run_research_for_run
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies.auth import CurrentUser, get_current_user
+from apps.worker.tasks.research import run_research_run_task
 
 router = APIRouter(prefix="/research-runs", tags=["research-runs"])
 logger = get_logger(__name__)
@@ -58,13 +59,45 @@ async def create_research_run(
             detail="No symbols to research. Add to watchlist or provide symbols in the request.",
         )
 
-    # 3. Create run record (RUNNING) + ticker records
+    # 3. Create run record + ticker records
     run_repo = ResearchRunRepository(db)
     run = await run_repo.create(
         run_type=body.run_type,
         strategy_version_id=sv_id,
         user_id=current_user.user_id,
     )
+
+    # ── Async path: enqueue and return immediately ─────────────────────────
+    if body.async_execution:
+        await run_repo.update_status(run.id, ResearchRunStatus.QUEUED)
+        await run_repo.add_tickers(run.id, symbols)
+        await db.commit()
+
+        queued_run = await run_repo.get_by_id(run.id, user_id=current_user.user_id)
+        if queued_run is None:
+            raise HTTPException(status_code=500, detail="Failed to load queued run")
+
+        # Resolve broker account before closing session
+        ba_repo = BrokerAccountRepository(db)
+        broker_account = await ba_repo.get_active_default(user_id=current_user.user_id)
+        broker_account_id_str = str(broker_account.id) if broker_account else None
+
+        run_research_run_task.delay(
+            str(run.id),
+            str(current_user.user_id),
+            broker_account_id_str,
+        )
+
+        logger.info(
+            "research_run_enqueued",
+            run_id=str(run.id),
+            symbols=symbols,
+        )
+        return api_response(
+            ResearchRunResponse.model_validate(queued_run).model_dump(), request
+        )
+
+    # ── Sync path: existing behavior (default) ────────────────────────────
     await run_repo.update_status(run.id, ResearchRunStatus.RUNNING)
     tickers = await run_repo.add_tickers(run.id, symbols)
     await db.commit()

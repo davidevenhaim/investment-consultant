@@ -1,5 +1,8 @@
 """Research run API tests — require DB. M3: graph runs synchronously, returns COMPLETED."""
 
+import uuid
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from apps.api.dependencies.auth import DEV_DEFAULT_USER_ID
@@ -287,3 +290,135 @@ async def test_run_recommendations_does_not_affect_latest(api_client) -> None:
     latest_symbols = {d["symbol"] for d in latest.json()["data"]}
     assert "AAPL" in latest_symbols
     assert "TSLA" not in latest_symbols
+
+
+# ── M12: async_execution tests ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_async_execution_returns_queued_immediately(api_client) -> None:
+    """POST with async_execution=true returns 201 with status QUEUED without running graph."""
+    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
+        mock_task.delay = MagicMock()
+
+        resp = await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "async_execution": True},
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["status"] == "QUEUED"
+    assert len(data["tickers"]) == 1
+    assert data["tickers"][0]["symbol"] == "AAPL"
+    mock_task.delay.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_execution_does_not_run_graph_inline(api_client) -> None:
+    """Graph runner must NOT be called inline when async_execution=true."""
+    with (
+        patch("apps.api.routers.research_runs.run_research_run_task") as mock_task,
+        patch("apps.api.routers.research_runs.run_research_for_run") as mock_graph,
+    ):
+        mock_task.delay = MagicMock()
+
+        await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "async_execution": True},
+        )
+
+    mock_graph.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_execution_false_runs_graph_synchronously(api_client) -> None:
+    """Default async_execution=false keeps existing sync behavior."""
+    resp = await api_client.post(
+        "/api/v1/research-runs",
+        json={"symbols": ["AAPL"], "async_execution": False},
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_async_execution_omitted_runs_graph_synchronously(api_client) -> None:
+    """Omitting async_execution defaults to sync (backward compatible)."""
+    resp = await api_client.post(
+        "/api/v1/research-runs",
+        json={"symbols": ["AAPL"]},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_async_run_visible_in_list(api_client) -> None:
+    """QUEUED async run appears in GET /research-runs list."""
+    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
+        mock_task.delay = MagicMock()
+        create = await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "async_execution": True},
+        )
+
+    run_id = create.json()["data"]["id"]
+    resp = await api_client.get("/api/v1/research-runs")
+    assert resp.status_code == 200
+    ids = [r["id"] for r in resp.json()["data"]]
+    assert run_id in ids
+
+
+@pytest.mark.asyncio
+async def test_async_run_get_by_id_returns_queued(api_client) -> None:
+    """GET /research-runs/{id} returns QUEUED status for an async run."""
+    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
+        mock_task.delay = MagicMock()
+        create = await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "async_execution": True},
+        )
+
+    run_id = create.json()["data"]["id"]
+    resp = await api_client.get(f"/api/v1/research-runs/{run_id}")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == "QUEUED"
+
+
+@pytest.mark.asyncio
+async def test_async_run_user_b_cannot_see_user_a_run(api_client) -> None:
+    """User B cannot access an async run created by User A."""
+    user_a_id = str(DEV_DEFAULT_USER_ID)
+    user_b_id = str(uuid.uuid4())
+
+    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
+        mock_task.delay = MagicMock()
+        create = await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "async_execution": True},
+            headers={"x-user-id": user_a_id},
+        )
+
+    run_id = create.json()["data"]["id"]
+
+    resp = await api_client.get(
+        f"/api/v1/research-runs/{run_id}",
+        headers={"x-user-id": user_b_id},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_queued_run_has_scheduled_type_via_enum(api_client) -> None:
+    """SCHEDULED run_type is accepted via the API (enum presence check)."""
+    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "run_type": "SCHEDULED", "async_execution": True},
+        )
+
+    assert resp.status_code == 201
+    assert resp.json()["data"]["run_type"] == "SCHEDULED"

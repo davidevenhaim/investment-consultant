@@ -6,10 +6,12 @@ class ResearchRunType(StrEnum):
     MORNING = "MORNING"
     EVENING = "EVENING"
     BACKTEST = "BACKTEST"
+    SCHEDULED = "SCHEDULED"
 
 
 class ResearchRunStatus(StrEnum):
     CREATED = "CREATED"
+    QUEUED = "QUEUED"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"

@@ -633,7 +633,7 @@ make run         # trigger a manual research run via CLI
 
 ## What to build next
 
-**Currently on Milestone 9.7.**
+**Currently on Milestone 12.**
 
 When asked to build a milestone, always:
 1. Read this file first
@@ -646,7 +646,7 @@ When asked to build a milestone, always:
 
 ## Current project state
 
-> Last verified: M11.3 complete. Next: M12 outcome tracking improvements.
+> Last verified: M12 complete. Next: M12.1 (retries/backoff, per-user scheduled research, historical replay).
 
 ### Quality gate (verified before M9.7)
 - `make test` — passing
@@ -889,6 +889,80 @@ Known limitations / M11.1 follow-ups:
 - `min_bar_fraction` threshold is approximate — can be tuned per horizon
 - No outcome aggregation endpoints (win rate summary, by symbol, by action) yet
 - `benchmark_symbol` defaults to SPY but no SPY bars in seed data — benchmark fields may be null
+
+---
+
+**M12 — Async Research Runs + Twice-Daily Scheduler**
+
+New enum values:
+- `ResearchRunStatus.QUEUED` — run created, waiting for Celery worker
+- `ResearchRunType.SCHEDULED` — run created by Celery beat
+
+New settings (all in `core/config.py`, override via env):
+```
+SCHEDULED_RESEARCH_ENABLED=false      # default off — set true to activate beat runs
+SCHEDULED_RESEARCH_USER_ID=00000000-0000-0000-0000-000000000001
+SCHEDULED_RESEARCH_HOURS=9,16         # UTC hours for beat schedule
+SCHEDULED_RESEARCH_MINUTE=30
+```
+
+New Celery tasks (`apps/worker/tasks/research.py`):
+- `run_research_run_task(research_run_id, user_id, broker_account_id)` — executes one run
+- `scheduled_research_task()` — creates + enqueues runs for configured user's watchlist
+
+Testable async helpers (call directly in tests):
+- `_execute_research_run_async(research_run_id, user_id, broker_account_id)`
+- `_execute_scheduled_research_async()`
+
+API change (`POST /api/v1/research-runs`):
+- New field: `async_execution: bool = false`
+- `false` (default): existing sync behavior, returns COMPLETED
+- `true`: creates QUEUED run, enqueues Celery task, returns immediately
+
+Repository additions (`packages/db/repositories.py`):
+- `ResearchRunRepository.get_by_id_internal(run_id)` — no user filter, for worker
+- `ResearchRunRepository.has_recent_scheduled_run(user_id, hours)` — dedup guard
+
+Run lifecycle:
+```
+Sync path:  CREATED → RUNNING → COMPLETED / FAILED
+Async path: CREATED → QUEUED → RUNNING → COMPLETED / FAILED
+```
+
+How to trigger an async run manually:
+```bash
+RUN_ID=$(curl -s -X POST http://localhost:8000/api/v1/research-runs \
+  -H "Content-Type: application/json" \
+  -d '{"symbols":["AAPL"],"async_execution":true}' | jq -r '.data.id')
+curl -s http://localhost:8000/api/v1/research-runs/$RUN_ID | jq '.data | {id,status}'
+```
+
+How to trigger the scheduled task manually:
+```bash
+make trigger-scheduled-research
+# or:
+docker compose exec -T worker celery -A apps.worker.celery_app call \
+  apps.worker.tasks.research.scheduled_research_task
+```
+
+Tests added:
+- `tests/worker/test_research_task.py` — 14 tests (task names, RUNNING/COMPLETED/FAILED
+  transitions, scheduled disabled/empty-watchlist/dedup/user-scoping, repo helpers)
+- `tests/api/test_research_runs.py` — 8 new tests (async POST returns QUEUED, graph not
+  called inline, sync default unchanged, QUEUED visible in list, user scoping, SCHEDULED type)
+
+Quality gate (M12):
+- `make test` — 714 passed, 1 pre-existing news failure (unrelated)
+- `make lint` — ruff clean, mypy clean
+
+Known limitations:
+- Scheduled research targets `SCHEDULED_RESEARCH_USER_ID` only (dev default); generalize
+  to all users in M12.1
+- No Celery task retry/backoff yet — set `max_retries=0`; add in M12.1
+- Historical `as_of_date` replay not implemented — M12.1
+- No UI showing async run progress
+- Beat schedule is built once at import time from `get_settings()`; changing
+  `SCHEDULED_RESEARCH_HOURS` requires worker restart
 
 ---
 

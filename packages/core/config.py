@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     news_timeout_seconds: int = 20
     news_max_retries: int = 2
 
+    # Scheduled research (Celery beat, twice-daily)
+    scheduled_research_enabled: bool = False
+    # UUID of the user that owns scheduled runs in dev; override per-user later
+    scheduled_research_user_id: str = "00000000-0000-0000-0000-000000000001"
+    # Comma-separated hours (UTC) for scheduled runs, e.g. "9,16"
+    scheduled_research_hours: str = "9,16"
+    scheduled_research_minute: int = 30
+
     # App
     environment: Literal["development", "staging", "production", "test"] = "development"
     log_level: str = "INFO"

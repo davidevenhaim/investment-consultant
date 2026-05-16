@@ -78,6 +78,13 @@ class ResearchRunCreate(BaseModel):
         default=None,
         description="Override watchlist. If omitted, uses active watchlist.",
     )
+    async_execution: bool = Field(
+        default=False,
+        description=(
+            "If true, enqueue the run as a Celery task and return immediately with "
+            "status QUEUED. If false (default), execute synchronously."
+        ),
+    )
 
 
 class ResearchRunTickerResponse(_OrmBase):

@@ -1,7 +1,7 @@
 """Repository layer — all DB access goes through these classes. No raw queries in routes."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
@@ -297,6 +297,35 @@ class ResearchRunRepository:
             .where(ResearchRun.id == run_id, user_filter)
         )
         return result.scalar_one_or_none()
+
+    async def get_by_id_internal(self, run_id: uuid.UUID) -> ResearchRun | None:
+        """Load a run by ID without user scoping. For worker-internal use only."""
+        result = await self._s.execute(
+            select(ResearchRun)
+            .options(selectinload(ResearchRun.tickers))
+            .where(ResearchRun.id == run_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def has_recent_scheduled_run(
+        self, user_id: uuid.UUID, hours: int = 6
+    ) -> bool:
+        """Return True if a SCHEDULED run for user_id with status QUEUED or RUNNING
+        was created within the last `hours` hours. Used to prevent duplicate beat runs."""
+        since = datetime.now(UTC) - timedelta(hours=hours)
+        result = await self._s.execute(
+            select(ResearchRun.id)
+            .where(
+                ResearchRun.user_id == user_id,
+                ResearchRun.run_type == ResearchRunType.SCHEDULED.value,
+                ResearchRun.status.in_(
+                    [ResearchRunStatus.QUEUED.value, ResearchRunStatus.RUNNING.value]
+                ),
+                ResearchRun.created_at >= since,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def list_recent(
         self, limit: int = 20, offset: int = 0, user_id: uuid.UUID | None = None
