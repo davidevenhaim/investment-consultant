@@ -1,10 +1,10 @@
 """Pydantic v2 schemas for API request/response objects."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from db.enums import (
     AssetType,
@@ -72,6 +72,9 @@ class InvestorProfileResponse(_OrmBase):
 # ── Research runs ─────────────────────────────────────────────────────────────
 
 
+_MAX_REPLAY_RUNS = 120
+
+
 class ResearchRunCreate(BaseModel):
     run_type: ResearchRunType = ResearchRunType.MANUAL
     symbols: list[str] | None = Field(
@@ -85,6 +88,73 @@ class ResearchRunCreate(BaseModel):
             "status QUEUED. If false (default), execute synchronously."
         ),
     )
+
+
+class HistoricalReplayRequest(BaseModel):
+    """Request body for POST /research-runs/historical-replay."""
+
+    start_date: date
+    end_date: date
+    symbols: list[str] = Field(min_length=1)
+    cadence: Literal["daily", "weekly", "monthly"] = "weekly"
+    async_execution: bool = Field(
+        default=True,
+        description="Must be true; historical replay is always asynchronous.",
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> "HistoricalReplayRequest":
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        if not self.async_execution:
+            raise ValueError(
+                "Historical replay only supports async_execution=true. "
+                "Synchronous replay is not available."
+            )
+        count = _count_replay_dates(self.start_date, self.end_date, self.cadence)
+        if count > _MAX_REPLAY_RUNS:
+            raise ValueError(
+                f"Replay range would generate {count} runs which exceeds the "
+                f"maximum of {_MAX_REPLAY_RUNS}. Reduce the date range or use a "
+                "less frequent cadence."
+            )
+        return self
+
+
+def _count_replay_dates(start: date, end: date, cadence: str) -> int:
+    """Return the number of replay dates that would be generated."""
+    return len(_generate_replay_dates(start, end, cadence))
+
+
+def _generate_replay_dates(start: date, end: date, cadence: str) -> list[date]:
+    """Generate replay dates between start and end (inclusive) for the given cadence."""
+    from datetime import timedelta  # noqa: PLC0415
+
+    dates: list[date] = []
+    if cadence == "daily":
+        cur = start
+        while cur <= end:
+            dates.append(cur)
+            cur += timedelta(days=1)
+    elif cadence == "weekly":
+        cur = start
+        while cur <= end:
+            dates.append(cur)
+            cur += timedelta(weeks=1)
+    elif cadence == "monthly":
+        cur = start
+        while cur <= end:
+            dates.append(cur)
+            # Advance one month: clamp day to last day of the next month
+            month = cur.month + 1
+            year = cur.year + (month - 1) // 12
+            month = ((month - 1) % 12) + 1
+            import calendar  # noqa: PLC0415
+
+            last_day = calendar.monthrange(year, month)[1]
+            day = min(cur.day, last_day)
+            cur = date(year, month, day)
+    return dates
 
 
 class ResearchRunTickerResponse(_OrmBase):
@@ -456,9 +526,7 @@ class AdvisorBacktestRequest(BaseModel):
         if self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
         if self.scenario_name is not None and self.recommendation_source != "SCENARIO":
-            raise ValueError(
-                "scenario_name is only valid when recommendation_source is 'SCENARIO'"
-            )
+            raise ValueError("scenario_name is only valid when recommendation_source is 'SCENARIO'")
 
 
 class AdvisorBacktestRunResponse(_OrmBase):

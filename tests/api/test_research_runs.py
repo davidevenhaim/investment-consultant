@@ -275,14 +275,8 @@ async def test_run_recommendations_does_not_affect_latest(api_client) -> None:
 
     # New endpoint for older run returns TSLA scoped to that run
     older_run_resp = await api_client.get("/api/v1/research-runs")
-    older_run_id = next(
-        r["id"]
-        for r in older_run_resp.json()["data"]
-        if r["id"] != newer_run_id
-    )
-    older_recs = await api_client.get(
-        f"/api/v1/research-runs/{older_run_id}/recommendations"
-    )
+    older_run_id = next(r["id"] for r in older_run_resp.json()["data"] if r["id"] != newer_run_id)
+    older_recs = await api_client.get(f"/api/v1/research-runs/{older_run_id}/recommendations")
     assert "TSLA" in {r["symbol"] for r in older_recs.json()["data"]["recommendations"]}
 
     # /latest still returns only the newest run's symbols
@@ -297,9 +291,10 @@ async def test_run_recommendations_does_not_affect_latest(api_client) -> None:
 
 @pytest.mark.asyncio
 async def test_async_execution_returns_queued_immediately(api_client) -> None:
-    """POST with async_execution=true returns 201 with status QUEUED without running graph."""
-    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
-        mock_task.delay = MagicMock()
+    """POST with async_execution=true returns 201 with status QUEUED without running graph.
+    Dispatch uses celery_app.send_task(), not task.delay()."""
+    with patch("apps.api.routers.research_runs._celery_app") as mock_celery:
+        mock_celery.send_task = MagicMock()
 
         resp = await api_client.post(
             "/api/v1/research-runs",
@@ -311,17 +306,20 @@ async def test_async_execution_returns_queued_immediately(api_client) -> None:
     assert data["status"] == "QUEUED"
     assert len(data["tickers"]) == 1
     assert data["tickers"][0]["symbol"] == "AAPL"
-    mock_task.delay.assert_called_once()
+    mock_celery.send_task.assert_called_once()
+    # Confirm the correct task name was used
+    call_args = mock_celery.send_task.call_args
+    assert call_args[0][0] == "apps.worker.tasks.research.run_research_run_task"
 
 
 @pytest.mark.asyncio
 async def test_async_execution_does_not_run_graph_inline(api_client) -> None:
     """Graph runner must NOT be called inline when async_execution=true."""
     with (
-        patch("apps.api.routers.research_runs.run_research_run_task") as mock_task,
+        patch("apps.api.routers.research_runs._celery_app") as mock_celery,
         patch("apps.api.routers.research_runs.run_research_for_run") as mock_graph,
     ):
-        mock_task.delay = MagicMock()
+        mock_celery.send_task = MagicMock()
 
         await api_client.post(
             "/api/v1/research-runs",
@@ -357,8 +355,8 @@ async def test_async_execution_omitted_runs_graph_synchronously(api_client) -> N
 @pytest.mark.asyncio
 async def test_async_run_visible_in_list(api_client) -> None:
     """QUEUED async run appears in GET /research-runs list."""
-    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
-        mock_task.delay = MagicMock()
+    with patch("apps.api.routers.research_runs._celery_app") as mock_celery:
+        mock_celery.send_task = MagicMock()
         create = await api_client.post(
             "/api/v1/research-runs",
             json={"symbols": ["AAPL"], "async_execution": True},
@@ -374,8 +372,8 @@ async def test_async_run_visible_in_list(api_client) -> None:
 @pytest.mark.asyncio
 async def test_async_run_get_by_id_returns_queued(api_client) -> None:
     """GET /research-runs/{id} returns QUEUED status for an async run."""
-    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
-        mock_task.delay = MagicMock()
+    with patch("apps.api.routers.research_runs._celery_app") as mock_celery:
+        mock_celery.send_task = MagicMock()
         create = await api_client.post(
             "/api/v1/research-runs",
             json={"symbols": ["AAPL"], "async_execution": True},
@@ -393,8 +391,8 @@ async def test_async_run_user_b_cannot_see_user_a_run(api_client) -> None:
     user_a_id = str(DEV_DEFAULT_USER_ID)
     user_b_id = str(uuid.uuid4())
 
-    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
-        mock_task.delay = MagicMock()
+    with patch("apps.api.routers.research_runs._celery_app") as mock_celery:
+        mock_celery.send_task = MagicMock()
         create = await api_client.post(
             "/api/v1/research-runs",
             json={"symbols": ["AAPL"], "async_execution": True},
@@ -413,8 +411,8 @@ async def test_async_run_user_b_cannot_see_user_a_run(api_client) -> None:
 @pytest.mark.asyncio
 async def test_queued_run_has_scheduled_type_via_enum(api_client) -> None:
     """SCHEDULED run_type is accepted via the API (enum presence check)."""
-    with patch("apps.api.routers.research_runs.run_research_run_task") as mock_task:
-        mock_task.delay = MagicMock()
+    with patch("apps.api.routers.research_runs._celery_app") as mock_celery:
+        mock_celery.send_task = MagicMock()
         resp = await api_client.post(
             "/api/v1/research-runs",
             json={"symbols": ["AAPL"], "run_type": "SCHEDULED", "async_execution": True},
@@ -422,3 +420,25 @@ async def test_queued_run_has_scheduled_type_via_enum(api_client) -> None:
 
     assert resp.status_code == 201
     assert resp.json()["data"]["run_type"] == "SCHEDULED"
+
+
+@pytest.mark.asyncio
+async def test_async_enqueue_failure_returns_503(api_client) -> None:
+    """If Celery dispatch fails, the run is marked FAILED and 503 is returned.
+    The response body must not contain broker URL, run ID, or stack trace."""
+    with patch("apps.api.routers.research_runs._celery_app") as mock_celery:
+        mock_celery.send_task = MagicMock(side_effect=ConnectionRefusedError("refused"))
+
+        resp = await api_client.post(
+            "/api/v1/research-runs",
+            json={"symbols": ["AAPL"], "async_execution": True},
+        )
+
+    assert resp.status_code == 503
+    body = resp.json()
+    detail = body.get("detail", "")
+    assert "queue" in detail.lower() or "retry" in detail.lower()
+    # Must not leak internal details
+    assert "redis" not in detail.lower()
+    assert "broker" not in detail.lower()
+    assert "ConnectionRefusedError" not in detail

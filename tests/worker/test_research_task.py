@@ -38,7 +38,7 @@ async def _seed_research_run(db_session, *, symbols=None, run_type="MANUAL", sta
     await db_session.flush()
 
     tickers = []
-    for sym in (symbols or ["AAPL"]):
+    for sym in symbols or ["AAPL"]:
         t = ResearchRunTicker(
             research_run_id=run_id,
             symbol=sym,
@@ -97,8 +97,9 @@ async def test_execute_research_run_marks_running_then_completed(db_session):
 
     with (
         patch("apps.worker.tasks.research.get_session_factory") as mock_factory,
-        patch("apps.worker.tasks.research.run_research_for_run", new_callable=AsyncMock)
-        as mock_graph,
+        patch(
+            "apps.worker.tasks.research.run_research_for_run", new_callable=AsyncMock
+        ) as mock_graph,
     ):
         mock_factory.return_value = _make_session_ctx(db_session)
         mock_graph.return_value = _mock_summary
@@ -126,8 +127,9 @@ async def test_execute_research_run_marks_failed_on_graph_exception(db_session):
 
     with (
         patch("apps.worker.tasks.research.get_session_factory") as mock_factory,
-        patch("apps.worker.tasks.research.run_research_for_run", new_callable=AsyncMock)
-        as mock_graph,
+        patch(
+            "apps.worker.tasks.research.run_research_for_run", new_callable=AsyncMock
+        ) as mock_graph,
     ):
         mock_factory.return_value = _make_session_ctx(db_session)
         mock_graph.side_effect = RuntimeError("graph exploded")
@@ -158,8 +160,9 @@ async def test_execute_research_run_marks_failed_when_symbols_failed(db_session)
 
     with (
         patch("apps.worker.tasks.research.get_session_factory") as mock_factory,
-        patch("apps.worker.tasks.research.run_research_for_run", new_callable=AsyncMock)
-        as mock_graph,
+        patch(
+            "apps.worker.tasks.research.run_research_for_run", new_callable=AsyncMock
+        ) as mock_graph,
     ):
         mock_factory.return_value = _make_session_ctx(db_session)
         mock_graph.return_value = _mock_summary
@@ -194,9 +197,7 @@ async def test_scheduled_task_returns_disabled_when_not_enabled(monkeypatch):
 async def test_scheduled_task_skips_empty_watchlist(db_session, monkeypatch):
     """Scheduled task no-ops gracefully when watchlist is empty."""
     monkeypatch.setenv("SCHEDULED_RESEARCH_ENABLED", "true")
-    monkeypatch.setenv(
-        "SCHEDULED_RESEARCH_USER_ID", str(DEV_DEFAULT_USER_ID)
-    )
+    monkeypatch.setenv("SCHEDULED_RESEARCH_USER_ID", str(DEV_DEFAULT_USER_ID))
     from core.config import get_settings
 
     get_settings.cache_clear()
@@ -214,9 +215,7 @@ async def test_scheduled_task_skips_empty_watchlist(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_task_creates_queued_run_when_watchlist_nonempty(
-    db_session, monkeypatch
-):
+async def test_scheduled_task_creates_queued_run_when_watchlist_nonempty(db_session, monkeypatch):
     """Scheduled task creates a QUEUED SCHEDULED run when watchlist has symbols."""
     monkeypatch.setenv("SCHEDULED_RESEARCH_ENABLED", "true")
     monkeypatch.setenv("SCHEDULED_RESEARCH_USER_ID", str(DEV_DEFAULT_USER_ID))
@@ -240,17 +239,17 @@ async def test_scheduled_task_creates_queued_run_when_watchlist_nonempty(
 
     with (
         patch("apps.worker.tasks.research.get_session_factory") as mock_factory,
-        patch("apps.worker.tasks.research.run_research_run_task") as mock_task,
+        patch("apps.worker.celery_app.celery_app") as mock_celery,
     ):
         mock_factory.return_value = _make_session_ctx(db_session)
-        mock_task.delay = MagicMock()
+        mock_celery.send_task = MagicMock()
 
         result = await _execute_scheduled_research_async()
 
     assert result["status"] == "queued"
     assert "AAPL" in result["symbols"]
     assert "run_id" in result
-    mock_task.delay.assert_called_once()
+    mock_celery.send_task.assert_called_once()
 
     get_settings.cache_clear()
 
@@ -304,8 +303,9 @@ async def test_scheduled_task_uses_user_scoped_watchlist(db_session, monkeypatch
     from db.models import WatchlistSymbol
 
     db_session.add(
-        WatchlistSymbol(user_id=DEV_DEFAULT_USER_ID, symbol="MSFT", asset_type="EQUITY",
-                        is_active=True)
+        WatchlistSymbol(
+            user_id=DEV_DEFAULT_USER_ID, symbol="MSFT", asset_type="EQUITY", is_active=True
+        )
     )
     db_session.add(
         WatchlistSymbol(user_id=other_user, symbol="AMZN", asset_type="EQUITY", is_active=True)
@@ -316,10 +316,10 @@ async def test_scheduled_task_uses_user_scoped_watchlist(db_session, monkeypatch
 
     with (
         patch("apps.worker.tasks.research.get_session_factory") as mock_factory,
-        patch("apps.worker.tasks.research.run_research_run_task") as mock_task,
+        patch("apps.worker.celery_app.celery_app") as mock_celery,
     ):
         mock_factory.return_value = _make_session_ctx(db_session)
-        mock_task.delay = MagicMock()
+        mock_celery.send_task = MagicMock()
 
         result = await _execute_scheduled_research_async()
 

@@ -7,6 +7,7 @@ class ResearchRunType(StrEnum):
     EVENING = "EVENING"
     BACKTEST = "BACKTEST"
     SCHEDULED = "SCHEDULED"
+    HISTORICAL_REPLAY = "HISTORICAL_REPLAY"
 
 
 class ResearchRunStatus(StrEnum):

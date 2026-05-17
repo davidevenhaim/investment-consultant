@@ -131,7 +131,9 @@ class NewsItem(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "news_items"
     __table_args__ = (
         UniqueConstraint(
-            "symbol", "provider", "provider_article_id",
+            "symbol",
+            "provider",
+            "provider_article_id",
             name="uq_news_symbol_provider_article",
         ),
         Index("ix_news_items_symbol", "symbol"),
@@ -252,17 +254,13 @@ class BrokerAccount(Base, UUIDMixin, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(50), nullable=False, default="IBKR")
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     external_account_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    connection_mode: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="LOCAL_TWS"
-    )
+    connection_mode: Mapped[str] = mapped_column(String(50), nullable=False, default="LOCAL_TWS")
     host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     client_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     readonly: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    last_sync_at: Mapped[datetime | None] = mapped_column(
-        PGTIMESTAMP(timezone=True), nullable=True
-    )
+    last_sync_at: Mapped[datetime | None] = mapped_column(PGTIMESTAMP(timezone=True), nullable=True)
     last_sync_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     last_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
@@ -891,12 +889,8 @@ class AdvisorBacktestTrade(Base, UUIDMixin, TimestampMixin):
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
-    recommendation_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True
-    )
-    research_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True
-    )
+    recommendation_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    research_run_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     action: Mapped[str] = mapped_column(String(30), nullable=False)
     # BUY | SELL | REDUCE | SKIP
     trade_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -911,9 +905,7 @@ class AdvisorBacktestTrade(Base, UUIDMixin, TimestampMixin):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
-    run: Mapped["AdvisorBacktestRun"] = relationship(
-        "AdvisorBacktestRun", back_populates="trades"
-    )
+    run: Mapped["AdvisorBacktestRun"] = relationship("AdvisorBacktestRun", back_populates="trades")
 
 
 class AdvisorBacktestEquityPoint(Base, UUIDMixin, TimestampMixin):

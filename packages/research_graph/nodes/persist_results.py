@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from core.logging import get_logger
@@ -47,6 +47,27 @@ def make_persist_results(
             signals = state.get("technical_signals") or {}
             price_at_rec: float | None = signals.get("latest_close")
 
+            # For historical replay runs, timestamps must be set to as_of_date so
+            # advisor backtest date filtering (ResearchRun.finished_at / rec.created_at)
+            # places the recommendation in the correct historical window.
+            replay_ts: datetime | None = None
+            as_of_date_str: str | None = state.get("as_of_date")
+            if as_of_date_str:
+                try:
+                    d = date.fromisoformat(as_of_date_str)
+                    # Use 16:00 UTC (typical US market close) so the timestamp lands
+                    # clearly inside the calendar day for date range comparisons.
+                    replay_ts = datetime(d.year, d.month, d.day, 16, 0, 0, tzinfo=UTC)
+                except ValueError:
+                    logger.warning(
+                        "persist_results_invalid_as_of_date",
+                        symbol=symbol,
+                        as_of_date=as_of_date_str,
+                    )
+
+            # as_of_time: use replay date when available, otherwise now
+            rec_as_of_time = replay_ts if replay_ts is not None else state["as_of_time"]
+
             # Persist neutral recommendation
             neutral_rec_id: uuid.UUID | None = None
             if neutral is not None:
@@ -64,10 +85,15 @@ def make_persist_results(
                     missing_details_json=neutral.missing_details,
                     final_reason=neutral.final_reason,
                     strategy_version_id=sv_id,
-                    as_of_time=state["as_of_time"],
+                    as_of_time=rec_as_of_time,
                     price_at_recommendation=price_at_rec,
                     data_quality_score=neutral.data_quality_score,
                 )
+                # Explicitly set created_at for replay runs so advisor backtest
+                # date filtering (NeutralRecommendation.created_at >= start_date)
+                # places the recommendation in the correct historical window.
+                if replay_ts is not None:
+                    nr.created_at = replay_ts
                 session.add(nr)
                 await session.flush()
                 neutral_rec_id = nr.id
@@ -82,6 +108,7 @@ def make_persist_results(
             personalized_rec_id: uuid.UUID | None = None
             if personalized is not None and neutral_rec_id is not None:
                 import contextlib  # noqa: PLC0415
+
                 snap_id: uuid.UUID | None = None
                 if personalized.portfolio_snapshot_id:
                     with contextlib.suppress(ValueError):
@@ -112,6 +139,7 @@ def make_persist_results(
             llm: Any = state.get("llm_analysis")
             if llm is not None and llm.llm_enabled and neutral_rec_id is not None:
                 from core.config import get_settings as _gs
+
                 _s = _gs()
                 thesis_align = llm.thesis.previous_thesis_alignment
                 ev = RecommendationEvidence(
@@ -148,17 +176,13 @@ def make_persist_results(
                         f"{news_score_result.negative_count}-). "
                         f"{news_score_result.reason}"
                     ),
-                    payload_json=news_score_result.model_dump(
-                        exclude={"top_articles"}
-                    ),
+                    payload_json=news_score_result.model_dump(exclude={"top_articles"}),
                 )
                 session.add(news_ev)
 
                 # Up to 3 individual NEWS_ITEM evidence rows for top articles
                 top_articles = (
-                    news_score_result.top_articles[:3]
-                    if news_score_result.top_articles
-                    else []
+                    news_score_result.top_articles[:3] if news_score_result.top_articles else []
                 )
                 for art in top_articles:
                     art_ev = RecommendationEvidence(
@@ -193,7 +217,8 @@ def make_persist_results(
                     source="manual_portfolio",
                     summary=(
                         f"Portfolio context: current weight {current_w:.1%}, "
-                        f"target weight {target_w:.1%}" if target_w is not None
+                        f"target weight {target_w:.1%}"
+                        if target_w is not None
                         else f"Portfolio context: current weight {current_w:.1%}. "
                         + (f"Cash available ${cash_av:,.0f}." if cash_av else "")
                     ),

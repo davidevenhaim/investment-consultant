@@ -124,6 +124,10 @@ class ResearchState(TypedDict):
     user_id: str | None
     symbol: str
     as_of_time: datetime
+    # ISO date string for historical replay runs (e.g. "2026-01-15").
+    # None for normal live runs. When set, persist node overrides created_at/as_of_time
+    # on persisted recommendations so advisor backtest date filtering works correctly.
+    as_of_date: str | None
     strategy_version: str
     prompt_version: str
     strategy_config: dict[str, Any]  # scoring config loaded from strategy_versions table
@@ -181,15 +185,15 @@ class ResearchState(TypedDict):
     personalized_rec: PersonalizedRecState | None
 
     # ── broker account (M9.6+) ───────────────────────────────────────────────
-    broker_account_id: str | None               # UUID str of BrokerAccount used for this run
+    broker_account_id: str | None  # UUID str of BrokerAccount used for this run
     # M10.3: API runs set True — skip global trade/profile fallback when broker_account_id is None
     enforce_broker_scope: bool
 
     # ── trading history (M9.5+) ──────────────────────────────────────────────
     symbol_trading_stats: dict[str, Any] | None  # per-symbol stats from trading profile
-    trading_profile: dict[str, Any] | None       # full aggregate trading profile
-    behavioral_flags: list[str]                  # e.g. ["DISPOSITION_EFFECT", "LOW_WIN_RATE"]
-    ibkr_sync_available: bool                    # True if IBKR returned executions this run
+    trading_profile: dict[str, Any] | None  # full aggregate trading profile
+    behavioral_flags: list[str]  # e.g. ["DISPOSITION_EFFECT", "LOW_WIN_RATE"]
+    ibkr_sync_available: bool  # True if IBKR returned executions this run
 
     # ── errors + quality ─────────────────────────────────────────────────────
     # Annotated with operator.add so nodes append rather than replace.

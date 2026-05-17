@@ -16,6 +16,7 @@ Celery worker process.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from celery import shared_task
@@ -25,6 +26,15 @@ from db.session import get_session_factory
 from research_graph.runner import run_research_for_run
 
 logger = get_logger(__name__)
+
+# ── Task name constants ─────────────────────────────────────────────────────────
+# Use these in API routes instead of importing the task object and calling .delay().
+# Dispatching via celery_app.send_task(NAME, args=[...]) ensures the configured
+# broker URL is used regardless of which Celery app is "current" in that process.
+
+RUN_RESEARCH_RUN_TASK_NAME = "apps.worker.tasks.research.run_research_run_task"
+SCHEDULED_RESEARCH_TASK_NAME = "apps.worker.tasks.research.scheduled_research_task"
+RUN_SCHEDULED_RESEARCH_TASK_NAME = "apps.worker.tasks.research.run_scheduled_research"
 
 
 # ── Core async helpers ─────────────────────────────────────────────────────────
@@ -61,10 +71,17 @@ async def _execute_research_run_async(
         await run_repo.update_status(run_uuid, ResearchRunStatus.RUNNING)
         await session.commit()
 
+        # Detect historical replay runs and extract as_of_date
+        metadata = run.metadata_json or {}
+        is_replay = bool(metadata.get("historical_replay"))
+        as_of_date_str: str | None = metadata.get("as_of_date") if is_replay else None
+
         logger.info(
             "research_run_task_started",
             run_id=research_run_id,
             symbol_count=len(run.tickers),
+            is_replay=is_replay,
+            as_of_date=as_of_date_str,
         )
 
         # Resolve broker account
@@ -97,6 +114,7 @@ async def _execute_research_run_async(
                 strategy_version,
                 broker_account_id=resolved_broker_id,
                 enforce_broker_scope=True,
+                as_of_date=as_of_date_str,
             )
             if summary["symbols_failed"]:
                 final_status = ResearchRunStatus.FAILED
@@ -116,7 +134,29 @@ async def _execute_research_run_async(
             final_status = ResearchRunStatus.FAILED
             error_message = str(exc)[:500]
 
-        await run_repo.update_status(run_uuid, final_status, error_message=error_message)
+        # For historical replay, back-date finished_at to as_of_date 16:00 UTC so
+        # advisor backtest date queries (ResearchRun.finished_at >= start_date) find
+        # the run in the correct historical window.
+        replay_finished_at: datetime | None = None
+        if is_replay and as_of_date_str:
+            try:
+                from datetime import date as _date  # noqa: PLC0415
+
+                d = _date.fromisoformat(as_of_date_str)
+                replay_finished_at = datetime(d.year, d.month, d.day, 16, 0, 0, tzinfo=UTC)
+            except ValueError:
+                logger.warning(
+                    "research_run_task_invalid_as_of_date",
+                    run_id=research_run_id,
+                    as_of_date=as_of_date_str,
+                )
+
+        await run_repo.update_status(
+            run_uuid,
+            final_status,
+            error_message=error_message,
+            finished_at=replay_finished_at,
+        )
         await session.commit()
 
         logger.info(
@@ -206,8 +246,15 @@ async def _execute_scheduled_research_async() -> dict[str, Any]:
         ba = await ba_repo.get_active_default(user_id=user_id)
         broker_account_id_str = str(ba.id) if ba else None
 
-    # Enqueue outside the session (session is closed after `async with` exits)
-    run_research_run_task.delay(run_id_str, user_id_str, broker_account_id_str)
+    # Enqueue outside the session (session is closed after `async with` exits).
+    # Use celery_app.send_task() to guarantee we dispatch through the correctly
+    # configured broker, regardless of which Celery app is "current" in the process.
+    from apps.worker.celery_app import celery_app as _celery_app  # noqa: PLC0415
+
+    _celery_app.send_task(
+        RUN_RESEARCH_RUN_TASK_NAME,
+        args=[run_id_str, user_id_str, broker_account_id_str],
+    )
 
     return {
         "status": "queued",
@@ -238,9 +285,7 @@ def run_research_run_task(
     resolves the user's active default account from the DB.
     """
     logger.info("research_run_task_received", run_id=research_run_id)
-    return asyncio.run(
-        _execute_research_run_async(research_run_id, user_id, broker_account_id)
-    )
+    return asyncio.run(_execute_research_run_async(research_run_id, user_id, broker_account_id))
 
 
 @shared_task(  # type: ignore[untyped-decorator]

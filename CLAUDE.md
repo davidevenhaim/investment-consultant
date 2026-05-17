@@ -633,7 +633,7 @@ make run         # trigger a manual research run via CLI
 
 ## What to build next
 
-**Currently on Milestone 12.**
+**Currently on Milestone 12.1.**
 
 When asked to build a milestone, always:
 1. Read this file first
@@ -646,7 +646,7 @@ When asked to build a milestone, always:
 
 ## Current project state
 
-> Last verified: M12 complete. Next: M12.1 (retries/backoff, per-user scheduled research, historical replay).
+> Last verified: M12.1 complete. Next: M12.2 (make graph nodes as-of-date aware: truncate market bars, date-bounded news, historical fundamentals snapshots).
 
 ### Quality gate (verified before M9.7)
 - `make test` — passing
@@ -959,10 +959,92 @@ Known limitations:
 - Scheduled research targets `SCHEDULED_RESEARCH_USER_ID` only (dev default); generalize
   to all users in M12.1
 - No Celery task retry/backoff yet — set `max_retries=0`; add in M12.1
-- Historical `as_of_date` replay not implemented — M12.1
+- Historical `as_of_date` replay implemented in M12.1 (graph nodes not yet fully as-of-date aware — M12.2)
 - No UI showing async run progress
 - Beat schedule is built once at import time from `get_settings()`; changing
   `SCHEDULED_RESEARCH_HOURS` requires worker restart
+
+---
+
+**M12.1 — Historical Graph Replay Job Seeding**
+
+### Historical replay limitations
+
+Replay creates dated research runs that look like historical advisor decisions. They are
+useful for pipeline testing and for building "follow the real advisor" backtests, but are
+**not institutional-grade historical backtests** because:
+
+| Node | Historical-aware? | Notes |
+|---|---|---|
+| `fetch_market_data` | Partial — fetches full 5yr history from DB/yfinance, so historical bars are present. Technical signals computed over those bars. | Does NOT truncate to as_of_date yet (M12.2). |
+| `compute_signals` | No — RSI/MACD computed on full available history, may use bars after as_of_date. | M12.2 will add `as_of_date` cutoff. |
+| `fetch_fundamentals` | No — fetches latest snapshot, not the snapshot as of that date. | M12.2+ to add historical fundamentals. |
+| `fetch_news` | No — fetches recent live news, not news from as_of_date. | M12.2+ to add date-bounded news query. |
+| `retrieve_memory` | No — retrieves most recent memory, not memory as of that date. | Best-effort for M12.1. |
+| `load_portfolio_context` | No — uses current portfolio. Replay runs typically have no portfolio context. | Acceptable for M12.1. |
+| `persist_results` | **Yes** — `NeutralRecommendation.created_at` is set to `as_of_date 16:00 UTC` for replay runs. | Required for advisor backtest date filtering. |
+
+### Data model (no migration needed)
+
+`ResearchRun.metadata_json` (JSONB, already exists) stores:
+```json
+{
+  "historical_replay": true,
+  "replay_batch_id": "<uuid>",
+  "as_of_date": "2026-01-15",
+  "source": "historical_graph_replay",
+  "cadence": "weekly"
+}
+```
+
+`ResearchRunType.HISTORICAL_REPLAY` added (String column, no DB migration needed).
+
+`ResearchState.as_of_date: str | None` added — carried through graph to persist node.
+
+### Timestamp override for advisor backtest compatibility
+
+When a replay run completes:
+- `ResearchRun.finished_at` → `as_of_date 16:00 UTC`
+- `NeutralRecommendation.created_at` → `as_of_date 16:00 UTC`
+
+This ensures advisor backtest queries (`ResearchRun.finished_at >= start_date`) find the
+replay runs in the correct date window, and `NeutralRecommendation.created_at` is used
+correctly for chronological trade placement.
+
+### Replay batch API
+
+```
+POST /api/v1/research-runs/historical-replay
+```
+
+Request:
+```json
+{
+  "start_date": "2026-01-01",
+  "end_date": "2026-05-13",
+  "symbols": ["AAPL", "NVDA"],
+  "cadence": "weekly",
+  "async_execution": true
+}
+```
+
+Cadences: `daily`, `weekly`, `monthly`. Default `weekly`.
+Max runs: 120 (validation error if exceeded).
+Always async (sync returns 422).
+
+Response:
+```json
+{
+  "data": {
+    "replay_batch_id": "...",
+    "count": 20,
+    "runs": [{"id": "...", "as_of_date": "2026-01-01", "status": "QUEUED", "symbols": [...]}]
+  }
+}
+```
+
+Replay runs are classified as `REAL` for advisor backtest source filtering (no
+`scenario_seed` flag). `recommendation_source=REAL` backtests include them.
 
 ---
 

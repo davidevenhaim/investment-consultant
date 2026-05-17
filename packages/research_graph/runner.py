@@ -1,7 +1,7 @@
 """Runner — orchestrates the graph for a full research run (all tickers)."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from ai.interfaces import LLMClient
@@ -62,14 +62,23 @@ def make_initial_state(
     strategy_config: dict[str, Any] | None = None,
     broker_account_id: uuid.UUID | str | None = None,
     enforce_broker_scope: bool = False,
+    as_of_date: date | str | None = None,
 ) -> ResearchState:
-    """Build the initial state for one ticker in a research run."""
+    """Build the initial state for one ticker in a research run.
+
+    ``as_of_date`` is an ISO date string or ``datetime.date`` for historical replay
+    runs. None for normal live runs.
+    """
+    as_of_date_str: str | None = None
+    if as_of_date is not None:
+        as_of_date_str = as_of_date.isoformat() if isinstance(as_of_date, date) else str(as_of_date)
     return ResearchState(
         run_id=str(run.id),
         run_ticker_id=str(ticker.id),
         user_id=str(run.user_id) if run.user_id is not None else None,
         symbol=ticker.symbol,
         as_of_time=datetime.now(UTC),
+        as_of_date=as_of_date_str,
         strategy_version=strategy_version,
         prompt_version="v0.1.0",
         strategy_config=strategy_config or _DEFAULT_SCORING_CONFIG,
@@ -131,6 +140,7 @@ async def run_research_for_run(
     news_provider: NewsProvider | None = None,
     broker_account_id: uuid.UUID | str | None = None,
     enforce_broker_scope: bool = False,
+    as_of_date: date | str | None = None,
 ) -> dict[str, Any]:
     """
     Run the research graph for every ticker in the run.
@@ -167,6 +177,7 @@ async def run_research_for_run(
                 strategy_config,
                 broker_account_id=broker_account_id,
                 enforce_broker_scope=enforce_broker_scope,
+                as_of_date=as_of_date,
             )
             final_state: ResearchState = await graph.ainvoke(initial_state)
 

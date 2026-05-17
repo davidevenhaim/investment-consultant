@@ -1,9 +1,10 @@
 import uuid
+import uuid as uuid_mod
 from typing import Any
 
 from core.logging import get_logger
 from core.responses import api_response
-from db.enums import ResearchRunStatus
+from db.enums import ResearchRunStatus, ResearchRunType
 from db.repositories import (
     BrokerAccountRepository,
     RecommendationRepository,
@@ -12,6 +13,7 @@ from db.repositories import (
     WatchlistRepository,
 )
 from db.schemas import (
+    HistoricalReplayRequest,
     NeutralRecommendationResponse,
     PersonalizedRecommendationResponse,
     RecommendationEvidenceResponse,
@@ -19,6 +21,7 @@ from db.schemas import (
     ResearchRunRecommendationsResponse,
     ResearchRunResponse,
     RunRecommendationItem,
+    _generate_replay_dates,
 )
 from db.session import get_db
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -26,7 +29,14 @@ from research_graph.runner import run_research_for_run
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies.auth import CurrentUser, get_current_user
-from apps.worker.tasks.research import run_research_run_task
+
+# Dispatch via celery_app.send_task() — NOT task.delay() — so the configured
+# broker URL (Redis) is always used, regardless of Celery's "current app" in
+# this process.  Importing the task object directly and calling .delay() routes
+# through whatever default Celery app is active at import time, which may not
+# have the correct broker when running in the API process.
+from apps.worker.celery_app import celery_app as _celery_app
+from apps.worker.tasks.research import RUN_RESEARCH_RUN_TASK_NAME
 
 router = APIRouter(prefix="/research-runs", tags=["research-runs"])
 logger = get_logger(__name__)
@@ -82,20 +92,33 @@ async def create_research_run(
         broker_account = await ba_repo.get_active_default(user_id=current_user.user_id)
         broker_account_id_str = str(broker_account.id) if broker_account else None
 
-        run_research_run_task.delay(
-            str(run.id),
-            str(current_user.user_id),
-            broker_account_id_str,
-        )
+        try:
+            _celery_app.send_task(
+                RUN_RESEARCH_RUN_TASK_NAME,
+                args=[str(run.id), str(current_user.user_id), broker_account_id_str],
+            )
+        except Exception as exc:
+            logger.error(
+                "research_run_enqueue_failed",
+                run_id=str(run.id),
+                error=type(exc).__name__,
+            )
+            # Mark the run FAILED so it does not sit as QUEUED forever
+            await run_repo.update_status(
+                run.id, ResearchRunStatus.FAILED, error_message="Job queue unavailable"
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Research job queue is unavailable. Please retry.",
+            ) from None
 
         logger.info(
             "research_run_enqueued",
             run_id=str(run.id),
             symbols=symbols,
         )
-        return api_response(
-            ResearchRunResponse.model_validate(queued_run).model_dump(), request
-        )
+        return api_response(ResearchRunResponse.model_validate(queued_run).model_dump(), request)
 
     # ── Sync path: existing behavior (default) ────────────────────────────
     await run_repo.update_status(run.id, ResearchRunStatus.RUNNING)
@@ -211,9 +234,7 @@ async def get_run_recommendations(
     items: list[RunRecommendationItem] = []
     if neutrals:
         neutral_ids = [n.id for n in neutrals]
-        personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(
-            neutral_ids
-        )
+        personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(neutral_ids)
         evidence_by_neutral = await rec_repo.get_evidence_by_neutral_ids(neutral_ids)
 
         for n in neutrals:
@@ -226,9 +247,7 @@ async def get_run_recommendations(
                     personalized=(
                         PersonalizedRecommendationResponse.model_validate(pers) if pers else None
                     ),
-                    evidence=[
-                        RecommendationEvidenceResponse.model_validate(e) for e in ev_rows
-                    ],
+                    evidence=[RecommendationEvidenceResponse.model_validate(e) for e in ev_rows],
                 )
             )
 
@@ -242,3 +261,129 @@ async def get_run_recommendations(
         recommendations=items,
     )
     return api_response(payload.model_dump(), request)
+
+
+@router.post("/historical-replay", status_code=201)
+async def create_historical_replay(
+    body: HistoricalReplayRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Create a batch of historical replay research runs.
+
+    Generates one ResearchRun per cadence date between start_date and end_date.
+    Each run is enqueued as a Celery task (always async). Runs are tagged with
+    metadata_json.historical_replay=true and metadata_json.as_of_date.
+
+    Replay runs are classified as REAL (not SCENARIO) for advisor backtest source
+    filtering. Use recommendation_source=REAL to include them in backtests.
+    """
+    symbols = [s.upper() for s in body.symbols]
+    replay_dates = _generate_replay_dates(body.start_date, body.end_date, body.cadence)
+    replay_batch_id = str(uuid_mod.uuid4())
+
+    sv_repo = StrategyVersionRepository(db)
+    active_sv = await sv_repo.get_active()
+    sv_id = active_sv.id if active_sv else None
+
+    run_repo = ResearchRunRepository(db)
+    created_runs: list[dict[str, Any]] = []
+
+    for replay_date in replay_dates:
+        run = await run_repo.create(
+            run_type=ResearchRunType.HISTORICAL_REPLAY,
+            strategy_version_id=sv_id,
+            user_id=current_user.user_id,
+        )
+        await run_repo.update_status(run.id, ResearchRunStatus.QUEUED)
+        await run_repo.add_tickers(run.id, symbols)
+
+        # Tag run with replay metadata — no scenario_seed so REAL filter includes it
+        from db.models import ResearchRun as ResearchRunModel  # noqa: PLC0415
+        from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+        await db.execute(
+            sa_update(ResearchRunModel)
+            .where(ResearchRunModel.id == run.id)
+            .values(
+                metadata_json={
+                    "historical_replay": True,
+                    "replay_batch_id": replay_batch_id,
+                    "as_of_date": replay_date.isoformat(),
+                    "source": "historical_graph_replay",
+                    "cadence": body.cadence,
+                }
+            )
+        )
+
+        created_runs.append(
+            {
+                "id": str(run.id),
+                "as_of_date": replay_date.isoformat(),
+                "status": ResearchRunStatus.QUEUED.value,
+                "symbols": symbols,
+            }
+        )
+
+    await db.commit()
+
+    # Enqueue all runs after committing so the worker can load them
+    ba_repo = BrokerAccountRepository(db)
+    broker_account = await ba_repo.get_active_default(user_id=current_user.user_id)
+    broker_account_id_str = str(broker_account.id) if broker_account else None
+
+    enqueued_ids: list[str] = []
+    try:
+        for run_info in created_runs:
+            _celery_app.send_task(
+                RUN_RESEARCH_RUN_TASK_NAME,
+                args=[run_info["id"], str(current_user.user_id), broker_account_id_str],
+            )
+            enqueued_ids.append(run_info["id"])
+    except Exception as exc:
+        logger.error(
+            "historical_replay_enqueue_failed",
+            replay_batch_id=replay_batch_id,
+            enqueued=len(enqueued_ids),
+            total=len(created_runs),
+            error=type(exc).__name__,
+        )
+        # Mark all un-enqueued runs as FAILED so they don't sit QUEUED forever
+        from db.models import ResearchRun as _ResearchRunModel  # noqa: PLC0415
+        from sqlalchemy import update as _sa_update  # noqa: PLC0415
+
+        failed_ids = [r["id"] for r in created_runs if r["id"] not in enqueued_ids]
+        if failed_ids:
+            await db.execute(
+                _sa_update(_ResearchRunModel)
+                .where(_ResearchRunModel.id.in_([uuid_mod.UUID(fid) for fid in failed_ids]))
+                .values(
+                    status=ResearchRunStatus.FAILED.value,
+                    error_message="Job queue unavailable",
+                )
+            )
+            await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="Research job queue is unavailable. Please retry.",
+        ) from None
+
+    logger.info(
+        "historical_replay_batch_created",
+        replay_batch_id=replay_batch_id,
+        count=len(created_runs),
+        start_date=str(body.start_date),
+        end_date=str(body.end_date),
+        cadence=body.cadence,
+        symbols=symbols,
+    )
+
+    return api_response(
+        {
+            "replay_batch_id": replay_batch_id,
+            "count": len(created_runs),
+            "runs": created_runs,
+        },
+        request,
+    )
