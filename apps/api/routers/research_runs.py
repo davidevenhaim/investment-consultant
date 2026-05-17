@@ -13,10 +13,12 @@ from db.repositories import (
     WatchlistRepository,
 )
 from db.schemas import (
+    AdvisorBacktestRunDetailResponse,
     HistoricalReplayRequest,
     NeutralRecommendationResponse,
     PersonalizedRecommendationResponse,
     RecommendationEvidenceResponse,
+    ReplayBatchBacktestRequest,
     ResearchRunCreate,
     ResearchRunRecommendationsResponse,
     ResearchRunResponse,
@@ -386,4 +388,162 @@ async def create_historical_replay(
             "runs": created_runs,
         },
         request,
+    )
+
+
+@router.get("/historical-replay/{replay_batch_id}")
+async def get_replay_batch_status(
+    replay_batch_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return status of every run in a historical replay batch.
+
+    Returns 404 if the batch does not exist or belongs to a different user.
+    Runs are ordered by as_of_date ascending.
+    """
+    repo = ResearchRunRepository(db)
+    runs = await repo.get_by_replay_batch_id(replay_batch_id, current_user.user_id)
+    if not runs:
+        raise HTTPException(status_code=404, detail=f"Replay batch {replay_batch_id} not found.")
+
+    counts: dict[str, int] = {}
+    for r in runs:
+        counts[r.status] = counts.get(r.status, 0) + 1
+
+    terminal_statuses = {"COMPLETED", "FAILED", "CANCELLED"}
+    terminal_count = sum(counts.get(s, 0) for s in terminal_statuses)
+    total = len(runs)
+    progress_pct = round(terminal_count / total * 100, 1) if total else 0.0
+
+    as_of_dates: list[str] = [
+        str(r.metadata_json["as_of_date"])
+        for r in runs
+        if r.metadata_json.get("as_of_date")
+    ]
+    started_ats = [r.started_at for r in runs if r.started_at is not None]
+    finished_ats = [r.finished_at for r in runs if r.finished_at is not None]
+
+    earliest_started = min(started_ats) if started_ats else None
+    latest_finished = max(finished_ats) if finished_ats else None
+
+    elapsed_seconds: float | None = None
+    if earliest_started is not None:
+        import datetime as _dt  # noqa: PLC0415
+        from datetime import UTC  # noqa: PLC0415
+
+        end_ref = latest_finished if latest_finished is not None else _dt.datetime.now(UTC)
+        elapsed_seconds = round((end_ref - earliest_started).total_seconds(), 1)
+
+    run_items = [
+        {
+            "id": str(r.id),
+            "as_of_date": r.metadata_json.get("as_of_date"),
+            "status": r.status,
+            "symbols": [t.symbol for t in r.tickers],
+            "created_at": r.created_at.isoformat(),
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+        }
+        for r in runs
+    ]
+
+    return api_response(
+        {
+            "replay_batch_id": replay_batch_id,
+            "total": total,
+            "completed_count": counts.get("COMPLETED", 0),
+            "failed_count": counts.get("FAILED", 0),
+            "running_count": counts.get("RUNNING", 0),
+            "queued_count": counts.get("QUEUED", 0),
+            "progress_pct": progress_pct,
+            "first_as_of_date": min(as_of_dates) if as_of_dates else None,
+            "last_as_of_date": max(as_of_dates) if as_of_dates else None,
+            "started_at": earliest_started.isoformat() if earliest_started else None,
+            "finished_at": latest_finished.isoformat() if latest_finished else None,
+            "elapsed_seconds": elapsed_seconds,
+            # kept for backwards compatibility
+            "counts": counts,
+            "runs": run_items,
+        },
+        request,
+    )
+
+
+@router.post("/historical-replay/{replay_batch_id}/backtest", status_code=201)
+async def create_replay_batch_backtest(
+    replay_batch_id: str,
+    body: ReplayBatchBacktestRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Run an advisor backtest over a completed historical replay batch.
+
+    Uses only the COMPLETED runs in the batch as the recommendation source.
+    The date window is derived from the batch's min/max as_of_date values.
+    Returns 404 if the batch does not exist for this user.
+    Returns 422 if none of the batch runs are COMPLETED.
+    """
+    import datetime as _dt  # noqa: PLC0415
+
+    from backtesting.advisor_simulation import run_advisor_backtest  # noqa: PLC0415
+    from db.models import AdvisorBacktestRun  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy.orm import selectinload  # noqa: PLC0415
+
+    repo = ResearchRunRepository(db)
+    all_runs = await repo.get_by_replay_batch_id(replay_batch_id, current_user.user_id)
+    if not all_runs:
+        raise HTTPException(status_code=404, detail=f"Replay batch {replay_batch_id} not found.")
+
+    completed = [r for r in all_runs if r.status == ResearchRunStatus.COMPLETED.value]
+    if not completed:
+        raise HTTPException(
+            status_code=422,
+            detail="No completed runs in this replay batch. Wait for runs to finish and retry.",
+        )
+
+    # Derive date window from as_of_date values in metadata
+    as_of_dates = [
+        _dt.date.fromisoformat(r.metadata_json["as_of_date"])
+        for r in completed
+        if r.metadata_json.get("as_of_date")
+    ]
+    start_date = min(as_of_dates)
+    end_date = max(as_of_dates)
+
+    assumptions = {
+        "source": "replay_batch_backtest",
+        "replay_batch_id": replay_batch_id,
+        "completed_run_count": len(completed),
+        "total_run_count": len(all_runs),
+    }
+
+    run = await run_advisor_backtest(
+        session=db,
+        user_id=current_user.user_id,
+        start_date=start_date,
+        end_date=end_date,
+        initial_cash=body.initial_cash,
+        benchmark_symbol=body.benchmark_symbol,
+        name=body.name or f"Replay batch {replay_batch_id[:8]}",
+        assumptions=assumptions,
+        recommendation_source="REPLAY_BATCH",
+        pinned_run_ids=[r.id for r in completed],
+    )
+    await db.commit()
+
+    result = await db.execute(
+        select(AdvisorBacktestRun)
+        .options(
+            selectinload(AdvisorBacktestRun.trades),
+            selectinload(AdvisorBacktestRun.equity_points),
+        )
+        .where(AdvisorBacktestRun.id == run.id)
+    )
+    run_full = result.scalar_one()
+    return api_response(
+        AdvisorBacktestRunDetailResponse.model_validate(run_full).model_dump(), request
     )
