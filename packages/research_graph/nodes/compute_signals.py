@@ -1,5 +1,6 @@
 """ComputeSignals — real deterministic technical indicators from OHLCV data."""
 
+import datetime as dt
 from typing import Any
 
 from core.logging import get_logger
@@ -24,6 +25,10 @@ def make_compute_signals(
     async def compute_signals(state: ResearchState) -> dict[str, Any]:
         symbol = state["symbol"]
         ohlcv = state.get("ohlcv")
+        as_of_date_str: str | None = state.get("as_of_date")
+        as_of_date: dt.date | None = (
+            dt.date.fromisoformat(as_of_date_str) if as_of_date_str else None
+        )
 
         try:
             if ohlcv is None or ohlcv.empty:
@@ -38,11 +43,14 @@ def make_compute_signals(
             highs = ohlcv["high"].tolist()
             lows = ohlcv["low"].tolist()
 
-            # Fetch SPY for relative strength — degrade gracefully if it fails
+            # Fetch SPY for relative strength — degrade gracefully if it fails.
+            # Pass as_of_date so SPY bars are also capped at the replay date.
             spy_closes: list[float] | None = None
             if symbol != _SPY:
                 try:
-                    spy_bars = await ensure_price_history(session, _SPY, years=2, provider=provider)
+                    spy_bars = await ensure_price_history(
+                        session, _SPY, years=2, provider=provider, as_of_date=as_of_date
+                    )
                     if spy_bars:
                         spy_closes = [b.close for b in spy_bars]
                 except Exception as spy_exc:
@@ -63,6 +71,7 @@ def make_compute_signals(
                 bars=len(closes),
                 rsi=signals.get("rsi_14"),
                 rs3m=signals.get("relative_strength_3m_vs_spy"),
+                as_of_date=as_of_date_str,
             )
             return {"technical_signals": signals}
 

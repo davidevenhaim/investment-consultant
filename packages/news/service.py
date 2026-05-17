@@ -1,5 +1,8 @@
 """News ingestion service — fetches, scores, and persists news articles."""
 
+import datetime as dt
+from datetime import UTC
+
 from core.config import get_settings
 from core.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,15 +33,21 @@ async def fetch_news_for_symbol(
     symbol: str,
     company_name: str | None = None,
     provider: NewsProvider | None = None,
+    as_of_date: dt.date | None = None,
 ) -> tuple[list[NewsArticle], NewsScoreResult]:
     """
     Fetch, persist, deduplicate, and score news for a symbol.
     Returns (articles, score_result).
     Never raises — returns empty result on failure.
+
+    ``as_of_date`` enables historical-replay mode: the external provider is
+    skipped (it would return current articles) and the DB is queried for
+    articles whose ``published_at`` is on or before ``as_of_date``.
+    For live runs, pass ``None`` (default).
     """
     settings = get_settings()
 
-    if not settings.news_enabled and provider is None:
+    if not settings.news_enabled and provider is None and as_of_date is None:
         logger.info("news_disabled", symbol=symbol)
         from news.scoring import _NO_DATA_SCORE
         return [], NewsScoreResult(
@@ -47,6 +56,46 @@ async def fetch_news_for_symbol(
             reason="News disabled (NEWS_ENABLED=false).",
         )
 
+    # ── Historical-replay path ────────────────────────────────────────────────
+    # Skip the external provider (it returns today's articles) and read only
+    # DB-stored articles published up to as_of_date.
+    if as_of_date is not None:
+        end_dt = dt.datetime.combine(as_of_date, dt.time.max).replace(tzinfo=UTC)
+        start_dt = end_dt - dt.timedelta(days=settings.news_lookback_days)
+        repo = NewsItemRepository(session)
+        db_items = await repo.get_recent(
+            symbol=symbol,
+            since=start_dt,
+            until=end_dt,
+            max_articles=settings.news_max_articles_per_symbol,
+        )
+        articles = [
+            NewsArticle(
+                provider_article_id=item.provider_article_id,
+                url=item.url,
+                title=item.title,
+                description=item.description,
+                source_name=item.source_name,
+                author=item.author,
+                published_at=item.published_at,
+                sentiment_score=float(item.sentiment_score or 0.0),
+                relevance_score=float(item.relevance_score or 0.0),
+                importance_score=float(item.importance_score or 0.0),
+                is_duplicate=bool(item.is_duplicate),
+            )
+            for item in db_items
+        ]
+        score = score_news_articles(articles)
+        logger.info(
+            "news_fetched_historical",
+            symbol=symbol,
+            as_of_date=as_of_date.isoformat(),
+            count=len(articles),
+            score=score.score,
+        )
+        return articles, score
+
+    # ── Live path (current run) ───────────────────────────────────────────────
     p = provider or _default_provider()
 
     try:

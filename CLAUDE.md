@@ -633,7 +633,7 @@ make run         # trigger a manual research run via CLI
 
 ## What to build next
 
-**Currently on Milestone 12.1.**
+**Currently on Milestone 12.2.**
 
 When asked to build a milestone, always:
 1. Read this file first
@@ -646,7 +646,7 @@ When asked to build a milestone, always:
 
 ## Current project state
 
-> Last verified: M12.1 complete. Next: M12.2 (make graph nodes as-of-date aware: truncate market bars, date-bounded news, historical fundamentals snapshots).
+> Last verified: M12.2 complete.
 
 ### Quality gate (verified before M9.7)
 - `make test` — passing
@@ -1045,6 +1045,61 @@ Response:
 
 Replay runs are classified as `REAL` for advisor backtest source filtering (no
 `scenario_seed` flag). `recommendation_source=REAL` backtests include them.
+
+---
+
+**M12.2 — Historical Graph Replay: As-Of-Date Aware Nodes**
+
+Goal: make the most important graph nodes respect `state.as_of_date` so historical
+replay runs do not use future market or news data.
+
+### Market data (`ensure_price_history` + `fetch_market_data` node)
+
+- Added `as_of_date: dt.date | None` parameter to `ensure_price_history()` in
+  `packages/market_data/service.py`.
+- Reference date (`ref_date`) is `as_of_date` for replay, `today` for live runs.
+- Staleness check uses `ref_date`: if DB already has bars past `as_of_date`, the
+  difference is negative → no provider fetch triggered.
+- `fetch_end` in provider call is capped at `ref_date` (never fetches future bars).
+- `repo.get_bars()` called with `end_date=as_of_date` so returned slice is always
+  capped at `as_of_date` even if DB holds newer bars.
+- `fetch_market_data` node parses `state["as_of_date"]` and passes it to
+  `ensure_price_history`.
+- `compute_signals` node passes the same `as_of_date` to SPY benchmark fetch so
+  SPY bars are also capped.
+
+### News (`fetch_news_for_symbol` + `fetch_news` node)
+
+- Added `as_of_date: dt.date | None` to `fetch_news_for_symbol()` in
+  `packages/news/service.py`.
+- **Historical-replay path** (when `as_of_date` is not None):
+  - Skips external provider fetch entirely (provider would return current articles).
+  - Reads from DB via `NewsItemRepository.get_recent()` with `until=as_of_date EOD`.
+  - Scores DB-sourced articles and returns them.
+- **Live path** (when `as_of_date` is None): unchanged — calls provider, persists, scores.
+- `get_recent()` in `packages/news/repository.py` gained `until: dt.datetime | None`
+  parameter that adds a `published_at <= until` WHERE clause.
+- `fetch_news` node parses `state["as_of_date"]` and passes it to `fetch_news_for_symbol`.
+
+### Debug metadata
+
+`fetch_market_data_ok`, `compute_signals_ok`, and `node_fetch_news_ok` log lines
+now include `as_of_date` so replay vs. live is visible in worker logs.
+
+### Remaining historical-replay limitations (as of M12.2)
+
+| Component | Status |
+|-----------|--------|
+| Market data bars | ✅ Capped at `as_of_date` |
+| SPY benchmark for signals | ✅ Capped at `as_of_date` |
+| News articles | ✅ DB-only, capped at `as_of_date` |
+| Fundamentals snapshot | ⚠️ Still uses latest available snapshot; no as-of-date filter |
+| Memory/ChromaDB retrieval | ⚠️ Retrieves current memory; no temporal filter |
+| Portfolio context | ⚠️ Uses current portfolio positions; acceptable for now |
+| Provider-sourced historical news | ⚠️ NewsAPI free tier has limited history; DB must have articles pre-seeded |
+
+Advisor backtests over `REAL` replay data are useful for pipeline testing but not
+yet institutional-grade historical backtests (fundamentals/memory still current).
 
 ---
 

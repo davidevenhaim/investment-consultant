@@ -68,3 +68,66 @@ async def test_fetch_news_node_no_provider_no_errors(db_session, monkeypatch) ->
     assert "errors" not in result or not result.get("errors")
 
     get_settings.cache_clear()
+
+
+# ── as_of_date (M12.2) ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fetch_news_node_as_of_date_excludes_future_articles(db_session) -> None:
+    """fetch_news node with as_of_date in state uses historical mode (DB-only, date-capped)."""
+    from news.repository import NewsItemRepository
+    from news.schemas import NewsArticle
+
+    as_of_str = "2026-01-15"
+    repo = NewsItemRepository(db_session)
+
+    # Pre-seed: one article before cutoff, one after
+    await repo.upsert_articles(
+        "AAPL",
+        "fake",
+        [
+            NewsArticle(
+                provider_article_id="past-001",
+                url="https://example.com/past",
+                title="Past event",
+                description=None,
+                source_name="Test",
+                author=None,
+                published_at=dt.datetime(2026, 1, 10, tzinfo=dt.UTC),
+                sentiment_score=0.4,
+                relevance_score=0.7,
+                importance_score=0.6,
+            ),
+            NewsArticle(
+                provider_article_id="future-002",
+                url="https://example.com/future2",
+                title="Future leak",
+                description=None,
+                source_name="Test",
+                author=None,
+                published_at=dt.datetime(2026, 1, 20, tzinfo=dt.UTC),
+                sentiment_score=0.9,
+                relevance_score=0.9,
+                importance_score=0.9,
+            ),
+        ],
+    )
+
+    state = {**_make_state("AAPL"), "as_of_date": as_of_str}
+    node = make_fetch_news(db_session, news_provider=None)
+    result = await node(state)
+
+    titles = [item["title"] for item in result["news_items"]]
+    assert "Past event" in titles
+    assert "Future leak" not in titles, "Future article must not appear in replay mode"
+
+
+@pytest.mark.asyncio
+async def test_fetch_news_node_no_as_of_date_calls_provider(db_session) -> None:
+    """Live run (no as_of_date) still delegates to provider — existing behavior unchanged."""
+    provider = FakeNewsProvider()
+    state = _make_state("AAPL")  # as_of_date absent
+    node = make_fetch_news(db_session, news_provider=provider)
+    result = await node(state)
+    assert len(result["news_items"]) == 3  # FakeNewsProvider returns 3 AAPL articles

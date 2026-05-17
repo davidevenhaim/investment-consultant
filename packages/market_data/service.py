@@ -29,10 +29,15 @@ async def ensure_price_history(
     symbol: str,
     years: int = 5,
     provider: MarketDataProvider | None = None,
+    as_of_date: dt.date | None = None,
 ) -> list[MarketPriceBar]:
     """
     Ensure `years` of daily price history exists in DB for symbol.
     Fetches from provider if data is missing or stale. Returns all stored bars ascending.
+
+    ``as_of_date`` caps the fetch window and the returned bars so historical replay
+    runs never include data after the replay date.  For live runs, pass ``None``
+    (default) to use today.
     """
     if provider is None:
         provider = _default_provider()
@@ -40,20 +45,26 @@ async def ensure_price_history(
     repo = MarketPriceRepository(session)
     sym = symbol.upper()
     today = dt.date.today()
-    required_start = today - dt.timedelta(days=years * 366)
+    # Reference date: as_of_date for replay, today for live runs.
+    ref_date = as_of_date if as_of_date is not None else today
+    required_start = ref_date - dt.timedelta(days=years * 366)
 
     latest = await repo.latest_date(sym, provider.provider_name)
-    needs_fetch = latest is None or (today - latest).days > _STALE_THRESHOLD_DAYS
+    # Staleness is relative to ref_date.  When latest > ref_date (e.g. current
+    # data already in DB for a replay run), the difference is negative, so this
+    # evaluates to False — no fetch needed.
+    needs_fetch = latest is None or (ref_date - latest).days > _STALE_THRESHOLD_DAYS
 
     if needs_fetch:
         fetch_start = required_start if latest is None else latest - dt.timedelta(days=5)
-        fetch_end = today
+        fetch_end = ref_date  # cap at as_of_date for replay; today for live runs
         logger.info(
             "market_data_fetching",
             symbol=sym,
             start=fetch_start.isoformat(),
             end=fetch_end.isoformat(),
             provider=provider.provider_name,
+            as_of_date=as_of_date.isoformat() if as_of_date else None,
         )
         bars = provider.fetch_historical_prices(sym, fetch_start, fetch_end)
         if bars:
@@ -62,7 +73,10 @@ async def ensure_price_history(
         else:
             logger.warning("market_data_empty", symbol=sym)
 
-    return await repo.get_bars(sym, provider.provider_name, start_date=required_start)
+    # For replay: pass end_date so the returned slice never includes future bars.
+    return await repo.get_bars(
+        sym, provider.provider_name, start_date=required_start, end_date=as_of_date
+    )
 
 
 def compute_data_quality(bars: list[MarketPriceBar]) -> float:

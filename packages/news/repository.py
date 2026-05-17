@@ -66,15 +66,23 @@ class NewsItemRepository:
         symbol: str,
         since: dt.datetime,
         max_articles: int = 20,
+        until: dt.datetime | None = None,
     ) -> list[NewsItem]:
-        """Return recent articles for symbol, newest first."""
+        """Return recent articles for symbol, newest first.
+
+        ``until`` caps the upper bound of ``published_at``.  Pass it for
+        historical replay runs so future articles are never included.
+        """
+        conditions = [
+            NewsItem.symbol == symbol.upper(),
+            NewsItem.published_at >= since,
+            NewsItem.is_duplicate.is_(False),
+        ]
+        if until is not None:
+            conditions.append(NewsItem.published_at <= until)
         stmt = (
             select(NewsItem)
-            .where(
-                NewsItem.symbol == symbol.upper(),
-                NewsItem.published_at >= since,
-                NewsItem.is_duplicate.is_(False),
-            )
+            .where(*conditions)
             .order_by(NewsItem.published_at.desc())
             .limit(max_articles)
         )

@@ -1,5 +1,6 @@
 """FetchMarketData — fetches real OHLCV from DB/yfinance via market_data service."""
 
+import datetime as dt
 from collections.abc import Callable
 from typing import Any
 
@@ -22,8 +23,14 @@ def make_fetch_market_data(
 
     async def fetch_market_data(state: ResearchState) -> dict[str, Any]:
         symbol = state["symbol"]
+        as_of_date_str: str | None = state.get("as_of_date")
+        as_of_date: dt.date | None = (
+            dt.date.fromisoformat(as_of_date_str) if as_of_date_str else None
+        )
         try:
-            bars = await ensure_price_history(session, symbol, years=5, provider=provider)
+            bars = await ensure_price_history(
+                session, symbol, years=5, provider=provider, as_of_date=as_of_date
+            )
             dq = compute_data_quality(bars)
 
             if not bars:
@@ -56,6 +63,7 @@ def make_fetch_market_data(
                 bars=len(bars),
                 dq=dq,
                 latest=str(bars[-1].price_date),
+                as_of_date=as_of_date_str,
             )
             return {"ohlcv": df, "data_quality_score": dq}
 

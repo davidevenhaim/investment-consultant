@@ -347,7 +347,14 @@ class ResearchRunRepository:
         run_id: uuid.UUID,
         status: ResearchRunStatus,
         error_message: str | None = None,
+        finished_at: datetime | None = None,
     ) -> None:
+        """Update research run status.
+
+        ``finished_at`` overrides the default ``datetime.now(UTC)`` for terminal
+        states.  Used by historical replay to back-date completion to the
+        ``as_of_date`` 16:00 UTC so advisor backtest date filtering works.
+        """
         values: dict[str, Any] = {
             "status": status.value,
             "updated_at": datetime.now(UTC),
@@ -360,7 +367,7 @@ class ResearchRunRepository:
             ResearchRunStatus.CANCELLED,
         )
         if status in terminal:
-            values["finished_at"] = datetime.now(UTC)
+            values["finished_at"] = finished_at if finished_at is not None else datetime.now(UTC)
         if error_message:
             values["error_message"] = error_message
         await self._s.execute(update(ResearchRun).where(ResearchRun.id == run_id).values(**values))
