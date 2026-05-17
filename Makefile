@@ -81,5 +81,10 @@ trigger-scheduled-research:
 	$(COMPOSE) exec -T worker celery -A apps.worker.celery_app call \
 		apps.worker.tasks.research.scheduled_research_task
 
+typecheck: $(VENV)
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/mypy packages/ apps/ --ignore-missing-imports
+
+mypy: typecheck
+
 ps:
 	$(COMPOSE) ps
