@@ -62,6 +62,83 @@ def test_celery_task_names_are_correct():
     assert scheduled_research_task.name == "apps.worker.tasks.research.scheduled_research_task"
 
 
+# ── Per-worker event loop regression tests ────────────────────────────────────
+# These guard against reverting to asyncio.run(), which closes the event loop
+# after every call and causes asyncpg "Future attached to a different loop"
+# errors on the second task in the same worker process.
+
+
+def test_get_worker_loop_returns_same_loop_on_repeated_calls() -> None:
+    """_get_worker_loop must return the identical loop object on every call.
+
+    If it returns a different loop, the asyncpg connection pool (initialised on
+    loop #1) will raise RuntimeError on loop #2.
+    """
+    from apps.worker.tasks.research import _get_worker_loop
+
+    loop1 = _get_worker_loop()
+    loop2 = _get_worker_loop()
+    assert loop1 is loop2, "New event loop created on second call — asyncpg pool will break"
+
+
+def test_run_async_does_not_close_loop_after_coroutine() -> None:
+    """The worker event loop must remain open after _run_async completes.
+
+    asyncio.run() closes the loop on exit; _run_async() must not.
+    """
+    from apps.worker.tasks.research import _get_worker_loop, _run_async
+
+    async def noop() -> int:
+        return 42
+
+    result = _run_async(noop())
+    assert result == 42
+    assert not _get_worker_loop().is_closed(), "Loop closed after _run_async — next task will fail"
+
+
+def test_run_async_sequential_coroutines_share_same_loop() -> None:
+    """Two sequential _run_async calls must execute on the same event loop.
+
+    This is the core regression: if different loops are used, asyncpg Futures
+    bound to the first loop are invalid on the second, causing the crash seen
+    in the M12.2 smoke test batch.
+    """
+    import asyncio as _asyncio
+
+    from apps.worker.tasks.research import _run_async
+
+    loops_seen: list[int] = []
+
+    async def capture_loop_id() -> None:
+        loops_seen.append(id(_asyncio.get_running_loop()))
+
+    _run_async(capture_loop_id())
+    _run_async(capture_loop_id())
+
+    assert len(loops_seen) == 2
+    assert loops_seen[0] == loops_seen[1], (
+        "Different event loops used for sequential _run_async calls — "
+        "asyncpg pool Futures are invalidated between tasks"
+    )
+
+
+def test_celery_tasks_do_not_call_asyncio_run() -> None:
+    """Celery task bodies must call _run_async(), not asyncio.run().
+
+    asyncio.run() closes the loop after every call; _run_async() reuses it.
+    This test guards against accidentally reverting the fix.
+    """
+    import inspect
+
+    import apps.worker.tasks.research as _mod
+
+    for task_fn in (_mod.run_research_run_task, _mod.scheduled_research_task):
+        src = inspect.getsource(task_fn)
+        assert "asyncio.run(" not in src, (
+            f"{task_fn.__name__} still calls asyncio.run() — use _run_async() instead"
+        )
+
+
 # ── _execute_research_run_async ────────────────────────────────────────────────
 
 

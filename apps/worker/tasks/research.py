@@ -5,7 +5,22 @@ Architecture
 All business logic lives in the private ``_execute_*_async`` helpers so they
 can be tested directly with pytest-asyncio without needing a real Celery worker.
 The public ``@shared_task`` functions are thin wrappers that call
-``asyncio.run()`` to bridge the sync Celery boundary.
+``_run_async()`` to bridge the sync Celery boundary.
+
+Event-loop strategy
+-------------------
+``asyncio.run()`` creates a **new** event loop and then **closes it** after
+every call.  SQLAlchemy's async engine (backed by asyncpg) caches ``Future``
+objects bound to the loop that was active when the engine was first
+initialised.  If that loop is destroyed and a new one is created for the next
+task, every pool access raises:
+
+    RuntimeError: Task <…> got Future <…> attached to a different loop
+
+Fix: maintain one persistent event loop per worker *process*  (``_worker_loop``).
+Tasks call ``_run_async()`` which uses ``loop.run_until_complete()`` instead of
+``asyncio.run()``.  The loop — and the asyncpg pool Futures bound to it — are
+never destroyed between task invocations.
 
 Session isolation
 -----------------
@@ -26,6 +41,31 @@ from db.session import get_session_factory
 from research_graph.runner import run_research_for_run
 
 logger = get_logger(__name__)
+
+# ── Per-worker persistent event loop ──────────────────────────────────────────
+# One loop per worker process; never closed between tasks.  See module docstring.
+
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    """Return the persistent per-process event loop, creating it if needed."""
+    global _worker_loop
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+    return _worker_loop
+
+
+def _run_async(coro: Any) -> Any:
+    """Run *coro* on the per-worker event loop.
+
+    Never use asyncio.run() in Celery tasks — it closes the loop after every
+    call, invalidating asyncpg pool Futures.  This helper uses
+    loop.run_until_complete() so the loop stays alive across task invocations.
+    """
+    return _get_worker_loop().run_until_complete(coro)
+
 
 # ── Task name constants ─────────────────────────────────────────────────────────
 # Use these in API routes instead of importing the task object and calling .delay().
@@ -285,7 +325,9 @@ def run_research_run_task(
     resolves the user's active default account from the DB.
     """
     logger.info("research_run_task_received", run_id=research_run_id)
-    return asyncio.run(_execute_research_run_async(research_run_id, user_id, broker_account_id))
+    return _run_async(  # type: ignore[no-any-return]
+        _execute_research_run_async(research_run_id, user_id, broker_account_id)
+    )
 
 
 @shared_task(  # type: ignore[untyped-decorator]
@@ -302,7 +344,7 @@ def scheduled_research_task(self: object) -> dict[str, Any]:
     the configured user within the last 6 hours.
     """
     logger.info("scheduled_research_task_triggered")
-    return asyncio.run(_execute_scheduled_research_async())
+    return _run_async(_execute_scheduled_research_async())  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
