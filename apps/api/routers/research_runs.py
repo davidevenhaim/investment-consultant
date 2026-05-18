@@ -433,8 +433,14 @@ async def get_replay_batch_status(
         import datetime as _dt  # noqa: PLC0415
         from datetime import UTC  # noqa: PLC0415
 
-        end_ref = latest_finished if latest_finished is not None else _dt.datetime.now(UTC)
-        elapsed_seconds = round((end_ref - earliest_started).total_seconds(), 1)
+        if latest_finished is not None:
+            # Replay runs have backdated finished_at — guard against negative duration.
+            delta = (latest_finished - earliest_started).total_seconds()
+            elapsed_seconds = round(delta, 1) if delta >= 0 else None
+        else:
+            elapsed_seconds = round(
+                (_dt.datetime.now(UTC) - earliest_started).total_seconds(), 1
+            )
 
     run_items = [
         {
@@ -514,6 +520,13 @@ async def create_replay_batch_backtest(
     start_date = min(as_of_dates)
     end_date = max(as_of_dates)
 
+    ip_dicts: list[dict[str, Any]] | None = None
+    if body.initial_positions:
+        ip_dicts = [
+            {"symbol": ip.symbol, "quantity": ip.quantity}
+            for ip in body.initial_positions
+        ]
+
     assumptions = {
         "source": "replay_batch_backtest",
         "replay_batch_id": replay_batch_id,
@@ -521,18 +534,22 @@ async def create_replay_batch_backtest(
         "total_run_count": len(all_runs),
     }
 
-    run = await run_advisor_backtest(
-        session=db,
-        user_id=current_user.user_id,
-        start_date=start_date,
-        end_date=end_date,
-        initial_cash=body.initial_cash,
-        benchmark_symbol=body.benchmark_symbol,
-        name=body.name or f"Replay batch {replay_batch_id[:8]}",
-        assumptions=assumptions,
-        recommendation_source="REPLAY_BATCH",
-        pinned_run_ids=[r.id for r in completed],
-    )
+    try:
+        run = await run_advisor_backtest(
+            session=db,
+            user_id=current_user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=body.initial_cash,
+            benchmark_symbol=body.benchmark_symbol,
+            name=body.name or f"Replay batch {replay_batch_id[:8]}",
+            assumptions=assumptions,
+            recommendation_source="REPLAY_BATCH",
+            pinned_run_ids=[r.id for r in completed],
+            initial_positions=ip_dicts,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
 
     result = await db.execute(
@@ -546,4 +563,99 @@ async def create_replay_batch_backtest(
     run_full = result.scalar_one()
     return api_response(
         AdvisorBacktestRunDetailResponse.model_validate(run_full).model_dump(), request
+    )
+
+
+@router.get("/historical-replay/{replay_batch_id}/report")
+async def get_replay_batch_report(
+    replay_batch_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return a deterministic quality report for a completed historical replay batch.
+
+    Groups recommendations by symbol and tracks how they evolved across replay dates.
+    Returns 404 if the batch does not exist or belongs to a different user.
+    Returns 422 if the batch has no COMPLETED runs.
+    No LLM calls. No external data fetches.
+    """
+    from backtesting.replay_report import (  # noqa: PLC0415
+        build_report_point,
+        build_timeline_changes,
+        build_timeline_summary,
+    )
+
+    repo = ResearchRunRepository(db)
+    all_runs = await repo.get_by_replay_batch_id(replay_batch_id, current_user.user_id)
+    if not all_runs:
+        raise HTTPException(status_code=404, detail=f"Replay batch {replay_batch_id} not found.")
+
+    completed = [r for r in all_runs if r.status == ResearchRunStatus.COMPLETED.value]
+    if not completed:
+        raise HTTPException(
+            status_code=422,
+            detail="No completed runs in this replay batch. Cannot build report yet.",
+        )
+
+    # Map run_id → as_of_date for point construction
+    run_to_date: dict[uuid_mod.UUID, str] = {
+        r.id: str(r.metadata_json.get("as_of_date", ""))
+        for r in completed
+    }
+
+    # Fetch all neutral recs for these runs in one query
+    rec_repo = RecommendationRepository(db)
+    neutrals = await rec_repo.get_neutral_recs_by_run_ids([r.id for r in completed])
+
+    # Fetch personalized recs for all neutrals in one query
+    neutral_ids = [n.id for n in neutrals]
+    personalized_map = await rec_repo.get_latest_personalized_by_neutral_ids(neutral_ids)
+
+    # Group points by symbol, sorted by as_of_date
+    symbol_points: dict[str, list[dict[str, Any]]] = {}
+    for n in neutrals:
+        aod = run_to_date.get(n.research_run_id, "")
+        pers = personalized_map.get(n.id)
+        point = build_report_point(
+            run_id=str(n.research_run_id),
+            as_of_date=aod,
+            neutral_action=n.action,
+            neutral_score=n.score,
+            personalized_action=pers.personal_action if pers else None,
+            price_at_recommendation=(
+                float(n.price_at_recommendation) if n.price_at_recommendation else None
+            ),
+            score_breakdown=n.score_breakdown_json or {},
+            missing_details=n.missing_details_json or [],
+            created_at=n.created_at.isoformat() if n.created_at else None,
+        )
+        symbol_points.setdefault(n.symbol.upper(), []).append(point)
+
+    # Sort each symbol's points by as_of_date ascending
+    for pts in symbol_points.values():
+        pts.sort(key=lambda p: p["as_of_date"])
+
+    all_as_of = [v for run in completed for v in [run_to_date.get(run.id, "")] if v]
+
+    timelines = [
+        {
+            "symbol": sym,
+            "points": pts,
+            "summary": build_timeline_summary(pts),
+            "changes": build_timeline_changes(pts),
+        }
+        for sym, pts in sorted(symbol_points.items())
+    ]
+
+    return api_response(
+        {
+            "replay_batch_id": replay_batch_id,
+            "completed_run_count": len(completed),
+            "symbols": sorted(symbol_points.keys()),
+            "first_as_of_date": min(all_as_of) if all_as_of else None,
+            "last_as_of_date": max(all_as_of) if all_as_of else None,
+            "timelines": timelines,
+        },
+        request,
     )

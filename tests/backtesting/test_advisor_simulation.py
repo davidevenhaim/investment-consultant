@@ -1334,3 +1334,97 @@ async def test_summary_json_stores_source_and_recommendations_considered(db_sess
     assert s["recommendation_source"] == "SCENARIO"
     assert s["scenario_name"] == "test_scenario"
     assert s["recommendations_considered"] == 1  # only AAPL passes SCENARIO + test_scenario filter
+
+
+# ── initial_positions tests ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_seed_cash_reduced(db_session) -> None:
+    """Seeding 10 shares @ $100 reduces opening cash by $1,000."""
+    uid = uuid.uuid4()
+    start = dt.date(2026, 1, 5)
+    end = dt.date(2026, 1, 30)
+    # dr=0.0 keeps price flat so final equity == initial_cash (cash + position)
+    await _seed_market_bars(db_session, "AAPL", start, n=30, start_price=100.0, dr=0.0)
+
+    run = await run_advisor_backtest(
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        initial_positions=[{"symbol": "AAPL", "quantity": 10}],
+    )
+    # final_equity = cash ($9,000) + position (10 * $100 = $1,000) = $10,000
+    assert abs(run.final_equity - 10_000.0) < 0.01
+    # cash_final must be less than initial_cash (position consumed $1,000)
+    assert run.cash_final < 10_000.0
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_reduce_creates_reduce_trade(db_session) -> None:
+    """A REDUCE recommendation after seeded position produces a REDUCE trade, not a SKIP."""
+    uid = uuid.uuid4()
+    start = dt.date(2026, 1, 5)
+    end = dt.date(2026, 2, 5)
+    await _seed_market_bars(db_session, "AAPL", start, n=40, start_price=100.0)
+
+    run, _ = await _seed_completed_run_with_rec(
+        db_session, uid, "AAPL", "REDUCE",
+        rec_date=dt.date(2026, 1, 12),
+    )
+
+    result = await run_advisor_backtest(
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=50_000.0,
+        initial_positions=[{"symbol": "AAPL", "quantity": 100}],
+    )
+    reduce_trades = [t for t in result.trades if t.trade_type == "REDUCE"]
+    skip_no_pos = [
+        t for t in result.trades
+        if t.trade_type == "SKIP" and t.reason == "no_position_to_reduce"
+    ]
+    assert len(reduce_trades) >= 1
+    assert len(skip_no_pos) == 0
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_unpriceable_raises_value_error(db_session) -> None:
+    """Symbol with no market bars raises ValueError (not an exception crash)."""
+    uid = uuid.uuid4()
+    start = dt.date(2026, 1, 5)
+    end = dt.date(2026, 1, 30)
+    # No market data seeded for UNKNWN
+
+    with pytest.raises(ValueError, match="Cannot price initial position UNKNWN"):
+        await run_advisor_backtest(
+            session=db_session,
+            user_id=uid,
+            start_date=start,
+            end_date=end,
+            initial_cash=10_000.0,
+            initial_positions=[{"symbol": "UNKNWN", "quantity": 10}],
+        )
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_cost_exceeds_cash_raises_value_error(db_session) -> None:
+    """Total cost > initial_cash raises ValueError."""
+    uid = uuid.uuid4()
+    start = dt.date(2026, 1, 5)
+    end = dt.date(2026, 1, 30)
+    await _seed_market_bars(db_session, "AAPL", start, n=30, start_price=100.0)
+
+    with pytest.raises(ValueError, match="exceeds initial_cash"):
+        await run_advisor_backtest(
+            session=db_session,
+            user_id=uid,
+            start_date=start,
+            end_date=end,
+            initial_cash=500.0,  # $500 cash; 10 shares @ $100 = $1,000 cost
+            initial_positions=[{"symbol": "AAPL", "quantity": 10}],
+        )

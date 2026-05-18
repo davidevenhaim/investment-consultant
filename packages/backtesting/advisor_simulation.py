@@ -441,8 +441,13 @@ async def run_advisor_backtest(
     assumptions: dict[str, Any] | None = None,
     recommendation_source: str = "ALL",
     scenario_name: str | None = None,
+    pinned_run_ids: list[uuid.UUID] | None = None,
+    initial_positions: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Run a follow-the-advisor simulation and persist results.
+
+    When *pinned_run_ids* is provided the date-range / source filter is
+    bypassed and those runs are used directly (e.g. a replay batch backtest).
 
     Returns the persisted AdvisorBacktestRun ORM row with relationships loaded.
     """
@@ -466,47 +471,51 @@ async def run_advisor_backtest(
     assumptions_used["recommendation_source"] = recommendation_source
     assumptions_used["scenario_name"] = scenario_name
 
-    # 1. Fetch all completed user runs in date range, with optional source filter
-    from sqlalchemy import not_
+    # 1. Determine which completed runs to draw recommendations from.
+    if pinned_run_ids is not None:
+        # Caller pre-filtered (e.g. replay batch) — skip date/source filter.
+        effective_run_ids: list[uuid.UUID] = pinned_run_ids
+    else:
+        from sqlalchemy import not_
 
-    _src = recommendation_source.upper()
-    source_filters = []
-    if _src == "SCENARIO":
-        source_filters.append(ResearchRun.metadata_json.contains({"scenario_seed": True}))
-        if scenario_name:
+        _src = recommendation_source.upper()
+        source_filters = []
+        if _src == "SCENARIO":
+            source_filters.append(ResearchRun.metadata_json.contains({"scenario_seed": True}))
+            if scenario_name:
+                source_filters.append(
+                    ResearchRun.metadata_json.contains({"scenario": scenario_name})
+                )
+        elif _src == "REAL":
             source_filters.append(
-                ResearchRun.metadata_json.contains({"scenario": scenario_name})
+                not_(ResearchRun.metadata_json.contains({"scenario_seed": True}))
             )
-    elif _src == "REAL":
-        source_filters.append(
-            not_(ResearchRun.metadata_json.contains({"scenario_seed": True}))
-        )
-    # ALL: no extra filters
+        # ALL: no extra filters
 
-    runs_result = await session.execute(
-        select(ResearchRun).where(
-            ResearchRun.user_id == user_id,
-            ResearchRun.status == ResearchRunStatus.COMPLETED.value,
-            ResearchRun.finished_at >= dt.datetime.combine(start_date, dt.time.min, tzinfo=UTC),
-            ResearchRun.finished_at <= dt.datetime.combine(end_date, dt.time.max, tzinfo=UTC),
-            *source_filters,
+        runs_result = await session.execute(
+            select(ResearchRun).where(
+                ResearchRun.user_id == user_id,
+                ResearchRun.status == ResearchRunStatus.COMPLETED.value,
+                ResearchRun.finished_at >= dt.datetime.combine(start_date, dt.time.min, tzinfo=UTC),
+                ResearchRun.finished_at <= dt.datetime.combine(end_date, dt.time.max, tzinfo=UTC),
+                *source_filters,
+            )
         )
-    )
-    user_runs = runs_result.scalars().all()
-    run_ids = [r.id for r in user_runs]
+        effective_run_ids = [r.id for r in runs_result.scalars().all()]
 
     # 2. Fetch neutral recommendations for those runs, sorted by created_at asc
     recs: list[NeutralRecommendation] = []
-    if run_ids:
+    if effective_run_ids:
         recs_result = await session.execute(
             select(NeutralRecommendation)
-            .where(NeutralRecommendation.research_run_id.in_(run_ids))
+            .where(NeutralRecommendation.research_run_id.in_(effective_run_ids))
             .order_by(NeutralRecommendation.created_at.asc(), NeutralRecommendation.symbol.asc())
         )
         recs = list(recs_result.scalars().all())
 
     # 3. Determine all symbols we'll need prices for
-    all_symbols = {r.symbol.upper() for r in recs} | {benchmark_symbol.upper()}
+    ip_symbols = {ip["symbol"].upper() for ip in (initial_positions or [])}
+    all_symbols = {r.symbol.upper() for r in recs} | {benchmark_symbol.upper()} | ip_symbols
 
     # 4. Fetch price bars for all symbols in the period (with buffer)
     buf_start = start_date - dt.timedelta(days=10)
@@ -516,6 +525,34 @@ async def run_advisor_backtest(
     for sym in all_symbols:
         bars = await mpr.get_bars(sym, start_date=buf_start, end_date=buf_end)
         bars_by_symbol[sym] = {b.price_date: float(b.adjusted_close or b.close) for b in bars}
+
+    # 4.5. Validate and price initial positions
+    # seeded: list of (symbol, quantity, entry_price) resolved at start_date
+    seeded: list[tuple[str, float, float]] = []
+    if initial_positions:
+        total_ip_cost = 0.0
+        for ip in initial_positions:
+            sym = ip["symbol"].upper()
+            qty = float(ip["quantity"])
+            entry_price, _ = _find_price(start_date, bars_by_symbol, sym, forward_only=True)
+            if entry_price is None:
+                msg = (
+                    f"Cannot price initial position {sym}: "
+                    f"no price bars found near {start_date}."
+                )
+                raise ValueError(msg)
+            total_ip_cost += qty * entry_price
+            seeded.append((sym, qty, entry_price))
+        if total_ip_cost > initial_cash:
+            msg = (
+                f"Initial positions total cost {total_ip_cost:.2f} "
+                f"exceeds initial_cash {initial_cash:.2f}."
+            )
+            raise ValueError(msg)
+        assumptions_used["initial_positions"] = [
+            {"symbol": sym, "quantity": qty, "entry_price": round(entry_p, 4)}
+            for sym, qty, entry_p in seeded
+        ]
 
     # 5. Build sorted list of trading calendar dates in range
     all_bar_dates = (
@@ -532,6 +569,13 @@ async def run_advisor_backtest(
     # 6. Initialise simulation state
     state = _SimState(cash=initial_cash)
     state.peak_equity = initial_cash
+
+    # Seed initial positions into simulation state (before processing recommendations)
+    for sym, qty, entry_p in seeded:
+        state.cash -= qty * entry_p
+        if sym not in state.positions:
+            state.positions[sym] = _Position(sym)
+        state.positions[sym].update_buy(qty, entry_p)
 
     trade_dicts: list[dict[str, Any]] = []
     winning = 0
@@ -728,6 +772,14 @@ async def run_advisor_backtest(
 
     curve_state = _SimState(cash=initial_cash)
     curve_state.peak_equity = initial_cash
+
+    # Mirror initial positions into the equity-curve replay state
+    for sym, qty, entry_p in seeded:
+        curve_state.cash -= qty * entry_p
+        if sym not in curve_state.positions:
+            curve_state.positions[sym] = _Position(sym)
+        curve_state.positions[sym].update_buy(qty, entry_p)
+
     ex_i = 0
 
     equity_point_rows: list[dict[str, Any]] = []

@@ -513,6 +513,25 @@ class LearningEventStatusUpdate(BaseModel):
 import datetime as _dt  # noqa: E402
 
 
+class InitialPositionItem(BaseModel):
+    """One pre-seeded holding for a replay backtest."""
+
+    symbol: str = Field(min_length=1, max_length=10)
+    quantity: float = Field(gt=0)
+
+    def model_post_init(self, __context: Any) -> None:
+        self.symbol = self.symbol.upper().strip()
+
+
+class ReplayBatchBacktestRequest(BaseModel):
+    """Request body for POST /research-runs/historical-replay/{id}/backtest."""
+
+    initial_cash: float = Field(gt=0)
+    benchmark_symbol: str = Field(default="SPY", min_length=1, max_length=20)
+    name: str | None = None
+    initial_positions: list[InitialPositionItem] | None = None
+
+
 class AdvisorBacktestRequest(BaseModel):
     start_date: _dt.date
     end_date: _dt.date

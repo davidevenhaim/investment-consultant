@@ -1,7 +1,7 @@
 """Tests for /api/v1/research-runs/historical-replay (M12.1 + M12.4)."""
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -846,3 +846,376 @@ async def test_replay_batch_backtest_traceability(api_client, db_session) -> Non
 
     summary = data.get("summary_json", {})
     assert summary.get("replay_batch_id") == batch_id or assumptions.get("replay_batch_id") == batch_id
+
+
+# ── elapsed_seconds guard tests ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_elapsed_seconds_null_when_finished_at_backdated(
+    api_client, db_session
+) -> None:
+    """Replay runs with backdated finished_at must return elapsed_seconds=null."""
+    from db.models import ResearchRun, ResearchRunTicker
+
+    batch_id = str(uuid.uuid4())
+    # started_at is real wall-clock; finished_at is backdated to replay as_of_date
+    wall_clock = datetime(2026, 5, 17, 12, 52, 30, tzinfo=UTC)
+    backdated = datetime(2026, 1, 1, 16, 0, 0, tzinfo=UTC)
+
+    run = ResearchRun(
+        id=uuid.uuid4(),
+        user_id=DEV_DEFAULT_USER_ID,
+        run_type="HISTORICAL_REPLAY",
+        status="COMPLETED",
+        started_at=wall_clock,
+        finished_at=backdated,
+        metadata_json={
+            "historical_replay": True,
+            "replay_batch_id": batch_id,
+            "as_of_date": "2026-01-01",
+            "cadence": "weekly",
+        },
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(ResearchRunTicker(research_run_id=run.id, symbol="AAPL", status="CREATED"))
+    await db_session.flush()
+
+    resp = await api_client.get(f"/api/v1/research-runs/historical-replay/{batch_id}")
+    data = resp.json()["data"]
+    # started_at and finished_at must be preserved as-is
+    assert "2026-05-17T12:52:30" in data["started_at"]
+    assert "2026-01-01T16:00:00" in data["finished_at"]
+    # elapsed must be null — not negative
+    assert data["elapsed_seconds"] is None
+
+
+@pytest.mark.asyncio
+async def test_elapsed_seconds_positive_for_running_batch(
+    api_client, db_session
+) -> None:
+    """In-progress batch (no finished_at) returns positive elapsed_seconds."""
+    from db.models import ResearchRun, ResearchRunTicker
+
+    batch_id = str(uuid.uuid4())
+    # started_at well in the past so elapsed > 0
+    past = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+
+    run = ResearchRun(
+        id=uuid.uuid4(),
+        user_id=DEV_DEFAULT_USER_ID,
+        run_type="HISTORICAL_REPLAY",
+        status="RUNNING",
+        started_at=past,
+        finished_at=None,
+        metadata_json={
+            "historical_replay": True,
+            "replay_batch_id": batch_id,
+            "as_of_date": "2026-01-01",
+            "cadence": "weekly",
+        },
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(ResearchRunTicker(research_run_id=run.id, symbol="AAPL", status="CREATED"))
+    await db_session.flush()
+
+    resp = await api_client.get(f"/api/v1/research-runs/historical-replay/{batch_id}")
+    data = resp.json()["data"]
+    assert data["finished_at"] is None
+    assert data["elapsed_seconds"] is not None
+    assert data["elapsed_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_elapsed_seconds_positive_when_not_backdated(
+    api_client, db_session
+) -> None:
+    """Normal completed batch (started_at < finished_at) still returns positive elapsed."""
+    from db.models import ResearchRun, ResearchRunTicker
+
+    batch_id = str(uuid.uuid4())
+    t_start = datetime(2026, 5, 17, 12, 0, 0, tzinfo=UTC)
+    t_end = datetime(2026, 5, 17, 12, 3, 45, tzinfo=UTC)
+
+    run = ResearchRun(
+        id=uuid.uuid4(),
+        user_id=DEV_DEFAULT_USER_ID,
+        run_type="HISTORICAL_REPLAY",
+        status="COMPLETED",
+        started_at=t_start,
+        finished_at=t_end,
+        metadata_json={
+            "historical_replay": True,
+            "replay_batch_id": batch_id,
+            "as_of_date": "2026-05-17",
+            "cadence": "weekly",
+        },
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(ResearchRunTicker(research_run_id=run.id, symbol="AAPL", status="CREATED"))
+    await db_session.flush()
+
+    resp = await api_client.get(f"/api/v1/research-runs/historical-replay/{batch_id}")
+    data = resp.json()["data"]
+    assert data["elapsed_seconds"] == 225.0  # 3m45s
+
+
+# ── initial_positions tests ────────────────────────────────────────────────────
+
+
+async def _seed_replay_run_with_neutral_rec(
+    db_session,
+    *,
+    user_id: uuid.UUID,
+    replay_batch_id: str,
+    as_of_date: str,
+    symbol: str,
+    action: str,
+) -> tuple:
+    """Seed a COMPLETED replay run + neutral recommendation. Returns (run, rec)."""
+    from db.models import NeutralRecommendation, ResearchRun, ResearchRunTicker
+
+    rec_dt = datetime.fromisoformat(f"{as_of_date}T16:00:00").replace(tzinfo=UTC)
+    run = ResearchRun(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        run_type="HISTORICAL_REPLAY",
+        status="COMPLETED",
+        started_at=rec_dt,
+        finished_at=rec_dt,
+        metadata_json={
+            "historical_replay": True,
+            "replay_batch_id": replay_batch_id,
+            "as_of_date": as_of_date,
+            "cadence": "weekly",
+        },
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(ResearchRunTicker(research_run_id=run.id, symbol=symbol, status="CREATED"))
+    await db_session.flush()
+
+    nr = NeutralRecommendation(
+        research_run_id=run.id,
+        symbol=symbol.upper(),
+        action=action,
+        score=40,
+        confidence=0.75,
+        final_reason="test",
+        score_breakdown_json={},
+        main_reasons_json=[],
+        main_risks_json=[],
+        missing_details_json=[],
+        what_changed_json=[],
+        as_of_time=rec_dt,
+        price_at_recommendation=100.0,
+    )
+    nr.created_at = rec_dt  # type: ignore[assignment]
+    db_session.add(nr)
+    await db_session.flush()
+    return run, nr
+
+
+async def _seed_market_price_rows(
+    db_session,
+    symbol: str,
+    start: date,
+    n: int = 30,
+    price: float = 100.0,
+) -> None:
+    from db.models import MarketPrice
+
+    d = start
+    rows = []
+    for _ in range(n):
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        rows.append(MarketPrice(
+            symbol=symbol.upper(),
+            price_date=d,
+            open=price,
+            high=price,
+            low=price,
+            close=price,
+            adjusted_close=price,
+            volume=1_000_000,
+            provider="yfinance",
+        ))
+        d += timedelta(days=1)
+    db_session.add_all(rows)
+    await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_backwards_compatible(api_client, db_session) -> None:
+    """Request without initial_positions behaves exactly as before."""
+    batch_id = str(uuid.uuid4())
+    await _seed_replay_batch(
+        db_session,
+        user_id=DEV_DEFAULT_USER_ID,
+        replay_batch_id=batch_id,
+        dates_and_statuses=[("2026-01-05", "COMPLETED")],
+    )
+    resp = await api_client.post(
+        f"/api/v1/research-runs/historical-replay/{batch_id}/backtest",
+        json={"initial_cash": 10000},
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["initial_cash"] == 10000
+    assert "initial_positions" not in (data.get("assumptions_json") or {})
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_reduce_executes_not_skipped(
+    api_client, db_session
+) -> None:
+    """REDUCE recommendation with a seeded position creates a REDUCE trade, not a SKIP."""
+    batch_id = str(uuid.uuid4())
+    await _seed_replay_run_with_neutral_rec(
+        db_session,
+        user_id=DEV_DEFAULT_USER_ID,
+        replay_batch_id=batch_id,
+        as_of_date="2026-01-05",
+        symbol="AAPL",
+        action="REDUCE",
+    )
+    await _seed_market_price_rows(db_session, "AAPL", date(2026, 1, 5), n=30, price=100.0)
+
+    resp = await api_client.post(
+        f"/api/v1/research-runs/historical-replay/{batch_id}/backtest",
+        json={
+            "initial_cash": 50000,
+            "initial_positions": [{"symbol": "AAPL", "quantity": 100}],
+        },
+    )
+    assert resp.status_code == 201
+    trades = resp.json()["data"]["trades"]
+    reduce_trades = [t for t in trades if t["trade_type"] == "REDUCE"]
+    skip_no_pos = [
+        t for t in trades
+        if t["trade_type"] == "SKIP" and t.get("reason") == "no_position_to_reduce"
+    ]
+    assert len(reduce_trades) >= 1, "Expected at least one REDUCE trade"
+    assert len(skip_no_pos) == 0, "Should not have no_position_to_reduce SKIPs"
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_in_assumptions_json(api_client, db_session) -> None:
+    """initial_positions are captured in assumptions_json with entry_price."""
+    batch_id = str(uuid.uuid4())
+    await _seed_replay_run_with_neutral_rec(
+        db_session,
+        user_id=DEV_DEFAULT_USER_ID,
+        replay_batch_id=batch_id,
+        as_of_date="2026-01-05",
+        symbol="AAPL",
+        action="HOLD",
+    )
+    await _seed_market_price_rows(db_session, "AAPL", date(2026, 1, 5), n=30, price=150.0)
+
+    resp = await api_client.post(
+        f"/api/v1/research-runs/historical-replay/{batch_id}/backtest",
+        json={
+            "initial_cash": 50000,
+            "initial_positions": [{"symbol": "AAPL", "quantity": 50}],
+        },
+    )
+    assert resp.status_code == 201
+    assumptions = resp.json()["data"]["assumptions_json"]
+    assert "initial_positions" in assumptions
+    ip = assumptions["initial_positions"]
+    assert len(ip) == 1
+    assert ip[0]["symbol"] == "AAPL"
+    assert ip[0]["quantity"] == 50
+    assert ip[0]["entry_price"] == 150.0
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_closed_position_in_summary(
+    api_client, db_session
+) -> None:
+    """After a REDUCE on a seeded position, closed_positions appears in summary_json."""
+    batch_id = str(uuid.uuid4())
+    await _seed_replay_run_with_neutral_rec(
+        db_session,
+        user_id=DEV_DEFAULT_USER_ID,
+        replay_batch_id=batch_id,
+        as_of_date="2026-01-05",
+        symbol="TSLA",
+        action="REDUCE",
+    )
+    await _seed_market_price_rows(db_session, "TSLA", date(2026, 1, 5), n=30, price=200.0)
+
+    resp = await api_client.post(
+        f"/api/v1/research-runs/historical-replay/{batch_id}/backtest",
+        json={
+            "initial_cash": 100000,
+            "initial_positions": [{"symbol": "TSLA", "quantity": 50}],
+        },
+    )
+    assert resp.status_code == 201
+    summary = resp.json()["data"]["summary_json"]
+    closed = summary.get("closed_positions", [])
+    symbols_closed = [c["symbol"] for c in closed]
+    assert "TSLA" in symbols_closed
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_cost_exceeds_cash_returns_422(
+    api_client, db_session
+) -> None:
+    """Total initial position cost > initial_cash → 422."""
+    batch_id = str(uuid.uuid4())
+    await _seed_replay_run_with_neutral_rec(
+        db_session,
+        user_id=DEV_DEFAULT_USER_ID,
+        replay_batch_id=batch_id,
+        as_of_date="2026-01-05",
+        symbol="AAPL",
+        action="HOLD",
+    )
+    # Price 100, quantity 500 → cost $50,000 > initial_cash $10,000
+    await _seed_market_price_rows(db_session, "AAPL", date(2026, 1, 5), n=10, price=100.0)
+
+    resp = await api_client.post(
+        f"/api/v1/research-runs/historical-replay/{batch_id}/backtest",
+        json={
+            "initial_cash": 10000,
+            "initial_positions": [{"symbol": "AAPL", "quantity": 500}],
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_initial_positions_unpriceable_symbol_returns_422(
+    api_client, db_session
+) -> None:
+    """Symbol with no market price bars → 422 (not 500)."""
+    batch_id = str(uuid.uuid4())
+    await _seed_replay_run_with_neutral_rec(
+        db_session,
+        user_id=DEV_DEFAULT_USER_ID,
+        replay_batch_id=batch_id,
+        as_of_date="2026-01-05",
+        symbol="AAPL",
+        action="HOLD",
+    )
+    # No market data seeded for UNKNWN
+
+    resp = await api_client.post(
+        f"/api/v1/research-runs/historical-replay/{batch_id}/backtest",
+        json={
+            "initial_cash": 50000,
+            "initial_positions": [{"symbol": "UNKNWN", "quantity": 10}],
+        },
+    )
+    assert resp.status_code == 422

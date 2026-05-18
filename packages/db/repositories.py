@@ -342,6 +342,21 @@ class ResearchRunRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_replay_batch_id(
+        self, replay_batch_id: str, user_id: uuid.UUID
+    ) -> list[ResearchRun]:
+        """Return all runs in a replay batch for the given user, ordered by as_of_date asc."""
+        result = await self._s.execute(
+            select(ResearchRun)
+            .options(selectinload(ResearchRun.tickers))
+            .where(
+                ResearchRun.user_id == user_id,
+                ResearchRun.metadata_json.contains({"replay_batch_id": replay_batch_id}),
+            )
+            .order_by(ResearchRun.metadata_json["as_of_date"].astext.asc())
+        )
+        return list(result.scalars().all())
+
     async def update_status(
         self,
         run_id: uuid.UUID,
@@ -494,6 +509,20 @@ class RecommendationRepository:
             select(NeutralRecommendation)
             .where(NeutralRecommendation.research_run_id == run_id)
             .order_by(NeutralRecommendation.symbol)
+        )
+        result = await self._s.execute(q)
+        return list(result.scalars().all())
+
+    async def get_neutral_recs_by_run_ids(
+        self, run_ids: list[uuid.UUID]
+    ) -> list[NeutralRecommendation]:
+        """Return all neutral recommendations for a set of research_run_ids."""
+        if not run_ids:
+            return []
+        q = (
+            select(NeutralRecommendation)
+            .where(NeutralRecommendation.research_run_id.in_(run_ids))
+            .order_by(NeutralRecommendation.research_run_id, NeutralRecommendation.symbol)
         )
         result = await self._s.execute(q)
         return list(result.scalars().all())
