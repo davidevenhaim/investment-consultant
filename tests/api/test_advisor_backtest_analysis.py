@@ -48,6 +48,7 @@ async def test_post_analysis_ollama_disabled_returns_503(
     """OLLAMA_ENABLED=false → 503 with clear message."""
     monkeypatch.setenv("OLLAMA_ENABLED", "false")
     from core.config import get_settings
+
     get_settings.cache_clear()
     # Create a run via API so it belongs to the current test user
     backtest_resp = await api_client.post(
@@ -109,6 +110,7 @@ async def test_get_analysis_returns_existing(
     """GET returns pre-existing completed analysis."""
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     # Create run via API so user ownership is correct
@@ -145,9 +147,7 @@ async def test_get_analysis_returns_existing(
     ).scalar_one()
     expected_headline = build_prompt_input(run_row)["deterministic_headline"]
 
-    get_resp = await api_client.get(
-        f"/api/v1/backtesting/advisor-runs/{run_id}/analysis"
-    )
+    get_resp = await api_client.get(f"/api/v1/backtesting/advisor-runs/{run_id}/analysis")
     assert get_resp.status_code == 200
     data = get_resp.json()["data"]
     assert data["status"] == "COMPLETED"
@@ -165,6 +165,7 @@ async def test_post_analysis_with_mocked_ollama_stores_completed(
     """POST with mocked Ollama → COMPLETED row, correct response shape."""
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     backtest_resp = await api_client.post(
@@ -200,7 +201,9 @@ async def test_post_analysis_with_mocked_ollama_stores_completed(
             .where(AdvisorBacktestRun.id == UUID(run_id))
         )
     ).scalar_one()
-    assert data["analysis_json"]["headline"] == build_prompt_input(run_row)["deterministic_headline"]
+    assert (
+        data["analysis_json"]["headline"] == build_prompt_input(run_row)["deterministic_headline"]
+    )
     assert data["analysis_json"].get("model_headline") == _valid_analysis_payload()["headline"]
     assert data["analysis_json"]["confidence"] == 0.6
     assert "provider" in data
@@ -217,6 +220,7 @@ async def test_response_schema_does_not_expose_user_id(
 ) -> None:
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     backtest_resp = await api_client.post(
@@ -245,6 +249,7 @@ async def test_post_analysis_force_true_regenerates(
     """force=True always calls Ollama even when a completed analysis exists."""
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     backtest_resp = await api_client.post(
@@ -279,6 +284,7 @@ async def test_get_analysis_404_when_only_stale_v1_exists(
     """GET must not return v1 analyses after prompt_version upgrade to v2."""
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     backtest_resp = await api_client.post(
@@ -293,7 +299,9 @@ async def test_get_analysis_404_when_only_stale_v1_exists(
     assert backtest_resp.status_code == 201
     run_id = backtest_resp.json()["data"]["id"]
     run_row = (
-        await db_session.execute(select(AdvisorBacktestRun).where(AdvisorBacktestRun.id == UUID(run_id)))
+        await db_session.execute(
+            select(AdvisorBacktestRun).where(AdvisorBacktestRun.id == UUID(run_id))
+        )
     ).scalar_one()
 
     stale = AdvisorBacktestAnalysis(
@@ -320,6 +328,7 @@ async def test_post_force_false_reuses_v2_completed_without_calling_ollama(
 ) -> None:
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     backtest_resp = await api_client.post(
@@ -348,9 +357,7 @@ async def test_post_force_false_reuses_v2_completed_without_calling_ollama(
 
 @pytest.mark.asyncio
 async def test_get_analysis_unknown_run_returns_404(api_client: AsyncClient) -> None:
-    resp = await api_client.get(
-        f"/api/v1/backtesting/advisor-runs/{uuid.uuid4()}/analysis"
-    )
+    resp = await api_client.get(f"/api/v1/backtesting/advisor-runs/{uuid.uuid4()}/analysis")
     assert resp.status_code == 404
 
 
@@ -361,6 +368,7 @@ async def test_post_analysis_unknown_run_returns_404(
 ) -> None:
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     resp = await api_client.post(

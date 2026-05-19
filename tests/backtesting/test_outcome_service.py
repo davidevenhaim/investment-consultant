@@ -54,11 +54,13 @@ def _make_bars(
     return bars
 
 
-def _make_drawdown_bars(symbol: str, start_date: dt.date, start_price: float) -> list[MarketPriceBar]:
+def _make_drawdown_bars(
+    symbol: str, start_date: dt.date, start_price: float
+) -> list[MarketPriceBar]:
     """Bars that drop 15% mid-period then partially recover."""
     prices = [start_price]
     for _ in range(9):
-        prices.append(prices[-1] * 0.98)   # -2% each day → ~-18% total
+        prices.append(prices[-1] * 0.98)  # -2% each day → ~-18% total
     for _ in range(11):
         prices.append(prices[-1] * 1.005)  # partial recovery
 
@@ -69,10 +71,15 @@ def _make_drawdown_bars(symbol: str, start_date: dt.date, start_price: float) ->
             d += dt.timedelta(days=1)
         bars.append(
             MarketPriceBar(
-                symbol=symbol, price_date=d,
-                open=round(p, 4), high=round(p * 1.005, 4),
-                low=round(p * 0.995, 4), close=round(p, 4),
-                adjusted_close=round(p, 4), volume=500_000, provider="test",
+                symbol=symbol,
+                price_date=d,
+                open=round(p, 4),
+                high=round(p * 1.005, 4),
+                low=round(p * 0.995, 4),
+                close=round(p, 4),
+                adjusted_close=round(p, 4),
+                volume=500_000,
+                provider="test",
             )
         )
         d += dt.timedelta(days=1)
@@ -181,22 +188,29 @@ def test_classify_label_buy_neutral() -> None:
 
 def test_buy_loss_triggers_learning_event() -> None:
     outcome = ForwardOutcome(
-        forward_return_pct=-0.10, relative_return_pct=-0.12,
-        max_drawdown_pct=-0.10, outcome_status="MEASURED", outcome_label="LOSS",
+        forward_return_pct=-0.10,
+        relative_return_pct=-0.12,
+        max_drawdown_pct=-0.10,
+        outcome_status="MEASURED",
+        outcome_label="LOSS",
     )
     assert should_generate_learning_event(outcome, "BUY_CANDIDATE") is True
 
 
 def test_hold_missed_upside_triggers() -> None:
     outcome = ForwardOutcome(
-        forward_return_pct=0.15, outcome_status="MEASURED", outcome_label="MISSED_UPSIDE",
+        forward_return_pct=0.15,
+        outcome_status="MEASURED",
+        outcome_label="MISSED_UPSIDE",
     )
     assert should_generate_learning_event(outcome, "HOLD") is True
 
 
 def test_mild_neutral_outcome_no_event() -> None:
     outcome = ForwardOutcome(
-        forward_return_pct=0.01, outcome_status="MEASURED", outcome_label="NEUTRAL",
+        forward_return_pct=0.01,
+        outcome_status="MEASURED",
+        outcome_label="NEUTRAL",
     )
     assert should_generate_learning_event(outcome, "BUY_CANDIDATE") is False
 
@@ -208,8 +222,11 @@ def test_insufficient_data_no_event() -> None:
 
 def test_buy_loss_fields_event_type() -> None:
     outcome = ForwardOutcome(
-        forward_return_pct=-0.09, relative_return_pct=-0.11,
-        max_drawdown_pct=-0.09, outcome_status="MEASURED", outcome_label="LOSS",
+        forward_return_pct=-0.09,
+        relative_return_pct=-0.11,
+        max_drawdown_pct=-0.09,
+        outcome_status="MEASURED",
+        outcome_label="LOSS",
     )
     fields = build_learning_event_fields(outcome, "BUY_CANDIDATE", "AAPL")
     assert fields["event_type"] == "UNDERPERFORMED_AFTER_BUY"
@@ -219,7 +236,9 @@ def test_buy_loss_fields_event_type() -> None:
 
 def test_hold_missed_upside_fields() -> None:
     outcome = ForwardOutcome(
-        forward_return_pct=0.20, outcome_status="MEASURED", outcome_label="MISSED_UPSIDE",
+        forward_return_pct=0.20,
+        outcome_status="MEASURED",
+        outcome_label="MISSED_UPSIDE",
     )
     fields = build_learning_event_fields(outcome, "HOLD", "NVDA")
     assert fields["event_type"] == "MISSED_UPSIDE_AFTER_HOLD"
@@ -249,7 +268,7 @@ def test_build_learning_event_summary_includes_all_parts() -> None:
     )
     fields = build_learning_event_fields(outcome, "BUY_CANDIDATE", "AAPL")
     summary = fields["summary"]
-    assert "-9.0%" in summary or "-9" in summary    # forward return present
+    assert "-9.0%" in summary or "-9" in summary  # forward return present
     assert "-11.0%" in summary or "-11" in summary  # relative present
     assert "-10.0%" in summary or "-10" in summary  # drawdown present
 
@@ -308,10 +327,15 @@ async def test_measure_recommendation_outcome_persists(db_session):
     bars = _make_bars("AAPL", start, 30, 100.0, daily_return=0.004)
     mp_rows = [
         MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=b.volume, provider="yfinance",
+            symbol=b.symbol,
+            price_date=b.price_date,
+            open=b.open,
+            high=b.high,
+            low=b.low,
+            close=b.close,
+            adjusted_close=b.adjusted_close,
+            volume=b.volume,
+            provider="yfinance",
         )
         for b in bars
     ]
@@ -370,23 +394,37 @@ async def test_measure_outcome_idempotent(db_session):
 
     start = dt.date(2024, 2, 1)
     bars = _make_bars("MSFT", start, 30, 300.0, daily_return=0.002)
-    db_session.add_all([
-        MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=1_000_000, provider="yfinance",
-        )
-        for b in bars
-    ])
+    db_session.add_all(
+        [
+            MarketPrice(
+                symbol=b.symbol,
+                price_date=b.price_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                adjusted_close=b.adjusted_close,
+                volume=1_000_000,
+                provider="yfinance",
+            )
+            for b in bars
+        ]
+    )
     await db_session.flush()
 
     kwargs = {
-        "session": db_session, "recommendation_type": "NEUTRAL",
-        "recommendation_id": nr.id, "symbol": "MSFT", "action": "HOLD",
-        "score": 60, "price_at_recommendation": None,
-        "measured_from": as_of, "horizon_days": 30, "benchmark_symbol": "SPY",
-        "research_run_id": run.id, "user_id": None,
+        "session": db_session,
+        "recommendation_type": "NEUTRAL",
+        "recommendation_id": nr.id,
+        "symbol": "MSFT",
+        "action": "HOLD",
+        "score": 60,
+        "price_at_recommendation": None,
+        "measured_from": as_of,
+        "horizon_days": 30,
+        "benchmark_symbol": "SPY",
+        "research_run_id": run.id,
+        "user_id": None,
     }
 
     r1 = await measure_recommendation_outcome(**kwargs)
@@ -406,10 +444,18 @@ async def test_generate_learning_event_for_buy_loss(db_session):
     await rr_repo.add_tickers(run.id, ["TSLA"])
     as_of = dt.datetime(2024, 3, 1, 10, 0, tzinfo=dt.UTC)
     nr = NeutralRecommendation(
-        research_run_id=run.id, symbol="TSLA", action="BUY_CANDIDATE", score=75,
-        confidence=0.70, final_reason="Test", score_breakdown_json={},
-        main_reasons_json=[], main_risks_json=[], missing_details_json=[],
-        what_changed_json=[], as_of_time=as_of,
+        research_run_id=run.id,
+        symbol="TSLA",
+        action="BUY_CANDIDATE",
+        score=75,
+        confidence=0.70,
+        final_reason="Test",
+        score_breakdown_json={},
+        main_reasons_json=[],
+        main_risks_json=[],
+        missing_details_json=[],
+        what_changed_json=[],
+        as_of_time=as_of,
     )
     db_session.add(nr)
     await db_session.flush()
@@ -417,29 +463,47 @@ async def test_generate_learning_event_for_buy_loss(db_session):
     # Seed losing bars
     start = dt.date(2024, 3, 1)
     bars = _make_bars("TSLA", start, 30, 200.0, daily_return=-0.005)
-    db_session.add_all([
-        MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=500_000, provider="yfinance",
-        )
-        for b in bars
-    ])
+    db_session.add_all(
+        [
+            MarketPrice(
+                symbol=b.symbol,
+                price_date=b.price_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                adjusted_close=b.adjusted_close,
+                volume=500_000,
+                provider="yfinance",
+            )
+            for b in bars
+        ]
+    )
     await db_session.flush()
 
     outcome_row = await measure_recommendation_outcome(
-        session=db_session, recommendation_type="NEUTRAL",
-        recommendation_id=nr.id, symbol="TSLA", action="BUY_CANDIDATE",
-        score=75, price_at_recommendation=200.0,
-        measured_from=as_of, horizon_days=30, benchmark_symbol="SPY",
-        research_run_id=run.id, user_id=None,
+        session=db_session,
+        recommendation_type="NEUTRAL",
+        recommendation_id=nr.id,
+        symbol="TSLA",
+        action="BUY_CANDIDATE",
+        score=75,
+        price_at_recommendation=200.0,
+        measured_from=as_of,
+        horizon_days=30,
+        benchmark_symbol="SPY",
+        research_run_id=run.id,
+        user_id=None,
     )
     assert outcome_row.outcome_label == "LOSS"
 
     event = await generate_learning_event_from_outcome(
-        session=db_session, outcome_row=outcome_row, action="BUY_CANDIDATE",
-        symbol="TSLA", user_id=None, research_run_id=run.id,
+        session=db_session,
+        outcome_row=outcome_row,
+        action="BUY_CANDIDATE",
+        symbol="TSLA",
+        user_id=None,
+        research_run_id=run.id,
     )
     assert event is not None
     assert event.event_type == "UNDERPERFORMED_AFTER_BUY"
@@ -458,38 +522,63 @@ async def test_no_learning_event_for_neutral_outcome(db_session):
     await rr_repo.add_tickers(run.id, ["SPY"])
     as_of = dt.datetime(2024, 4, 1, 10, 0, tzinfo=dt.UTC)
     nr = NeutralRecommendation(
-        research_run_id=run.id, symbol="SPY", action="HOLD", score=55,
-        confidence=0.70, final_reason="Test", score_breakdown_json={},
-        main_reasons_json=[], main_risks_json=[], missing_details_json=[],
-        what_changed_json=[], as_of_time=as_of,
+        research_run_id=run.id,
+        symbol="SPY",
+        action="HOLD",
+        score=55,
+        confidence=0.70,
+        final_reason="Test",
+        score_breakdown_json={},
+        main_reasons_json=[],
+        main_risks_json=[],
+        missing_details_json=[],
+        what_changed_json=[],
+        as_of_time=as_of,
     )
     db_session.add(nr)
     await db_session.flush()
 
     start = dt.date(2024, 4, 1)
     bars = _make_bars("SPY", start, 30, 400.0, daily_return=0.001)  # mild +3%
-    db_session.add_all([
-        MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=5_000_000, provider="yfinance",
-        )
-        for b in bars
-    ])
+    db_session.add_all(
+        [
+            MarketPrice(
+                symbol=b.symbol,
+                price_date=b.price_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                adjusted_close=b.adjusted_close,
+                volume=5_000_000,
+                provider="yfinance",
+            )
+            for b in bars
+        ]
+    )
     await db_session.flush()
 
     outcome_row = await measure_recommendation_outcome(
-        session=db_session, recommendation_type="NEUTRAL",
-        recommendation_id=nr.id, symbol="SPY", action="HOLD",
-        score=55, price_at_recommendation=400.0,
-        measured_from=as_of, horizon_days=30, benchmark_symbol="SPY",
-        research_run_id=run.id, user_id=None,
+        session=db_session,
+        recommendation_type="NEUTRAL",
+        recommendation_id=nr.id,
+        symbol="SPY",
+        action="HOLD",
+        score=55,
+        price_at_recommendation=400.0,
+        measured_from=as_of,
+        horizon_days=30,
+        benchmark_symbol="SPY",
+        research_run_id=run.id,
+        user_id=None,
     )
 
     event = await generate_learning_event_from_outcome(
-        session=db_session, outcome_row=outcome_row, action="HOLD",
-        symbol="SPY", user_id=None,
+        session=db_session,
+        outcome_row=outcome_row,
+        action="HOLD",
+        symbol="SPY",
+        user_id=None,
     )
     assert event is None
 
@@ -536,7 +625,7 @@ async def test_horizon_not_elapsed_returns_pending(db_session):
     run = await _seed_run(db_session)
     # Recommendation made "now"; horizon=30 days into the future
     now = dt.datetime(2025, 6, 1, 12, 0, tzinfo=dt.UTC)
-    as_of = now - dt.timedelta(days=1)   # 1 day old, horizon 30 days → not elapsed
+    as_of = now - dt.timedelta(days=1)  # 1 day old, horizon 30 days → not elapsed
     nr = _make_rec(db_session, run.id, "AAPL", as_of)
     await db_session.flush()
 
@@ -623,15 +712,22 @@ async def test_pending_becomes_measured_after_horizon_elapses(db_session):
     # Seed bars so re-measurement can produce MEASURED
     start_date = as_of.date()
     bars = _make_bars("AAPL", start_date, 40, 100.0, daily_return=0.003)
-    db_session.add_all([
-        MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=1_000_000, provider="yfinance",
-        )
-        for b in bars
-    ])
+    db_session.add_all(
+        [
+            MarketPrice(
+                symbol=b.symbol,
+                price_date=b.price_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                adjusted_close=b.adjusted_close,
+                volume=1_000_000,
+                provider="yfinance",
+            )
+            for b in bars
+        ]
+    )
     await db_session.flush()
 
     now_after = as_of + dt.timedelta(days=35)  # horizon elapsed
@@ -652,7 +748,7 @@ async def test_pending_becomes_measured_after_horizon_elapses(db_session):
         _now=now_after,
     )
 
-    assert r2.id == r1.id          # same row, updated in place
+    assert r2.id == r1.id  # same row, updated in place
     assert r2.outcome_status == "MEASURED"
     assert r2.forward_return_pct is not None
 
@@ -690,15 +786,22 @@ async def test_insufficient_data_remeasured_when_bars_appear(db_session):
     # Now seed bars
     start_date = as_of.date()
     bars = _make_bars("AAPL", start_date, 40, 100.0, daily_return=0.004)
-    db_session.add_all([
-        MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=1_000_000, provider="yfinance",
-        )
-        for b in bars
-    ])
+    db_session.add_all(
+        [
+            MarketPrice(
+                symbol=b.symbol,
+                price_date=b.price_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                adjusted_close=b.adjusted_close,
+                volume=1_000_000,
+                provider="yfinance",
+            )
+            for b in bars
+        ]
+    )
     await db_session.flush()
 
     # Second call with same _now: should re-measure and produce MEASURED
@@ -733,15 +836,22 @@ async def test_measured_row_is_never_overwritten(db_session):
 
     start_date = as_of.date()
     bars = _make_bars("AAPL", start_date, 40, 100.0, daily_return=0.005)
-    db_session.add_all([
-        MarketPrice(
-            symbol=b.symbol, price_date=b.price_date,
-            open=b.open, high=b.high, low=b.low,
-            close=b.close, adjusted_close=b.adjusted_close,
-            volume=1_000_000, provider="yfinance",
-        )
-        for b in bars
-    ])
+    db_session.add_all(
+        [
+            MarketPrice(
+                symbol=b.symbol,
+                price_date=b.price_date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                adjusted_close=b.adjusted_close,
+                volume=1_000_000,
+                provider="yfinance",
+            )
+            for b in bars
+        ]
+    )
     await db_session.flush()
 
     now = as_of + dt.timedelta(days=40)

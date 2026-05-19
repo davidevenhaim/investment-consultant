@@ -204,6 +204,7 @@ async def seed() -> None:
         )
         if existing_ca is None:
             from ai.schemas import CombinedLLMAnalysis  # noqa: PLC0415
+
             ca = await pv_repo.create(
                 name=_COMBINED_ANALYSIS_NAME,
                 version=_COMBINED_ANALYSIS_VERSION,
@@ -211,9 +212,7 @@ async def seed() -> None:
                 output_schema=CombinedLLMAnalysis.model_json_schema(),
                 is_active=True,
             )
-            logger.info(
-                "seed_combined_analysis_prompt_created", name=ca.name, version=ca.version
-            )
+            logger.info("seed_combined_analysis_prompt_created", name=ca.name, version=ca.version)
         else:
             logger.info("seed_combined_analysis_prompt_exists", name=existing_ca.name)
 

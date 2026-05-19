@@ -126,8 +126,7 @@ def _build_deterministic_headline(
         return f"Advisor return {advisor_return_display}."
     if relative_return_display == "N/A":
         return (
-            f"Advisor return {advisor_return_display} vs {bench_label} "
-            f"{benchmark_return_display}."
+            f"Advisor return {advisor_return_display} vs {bench_label} {benchmark_return_display}."
         )
     return (
         f"Advisor return {advisor_return_display} vs {bench_label} "

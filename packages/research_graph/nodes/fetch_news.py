@@ -48,6 +48,7 @@ def make_fetch_news(
             logger.warning("node_fetch_news_failed", symbol=symbol, error=str(exc))
             from news.schemas import NewsScoreResult
             from news.scoring import _NO_DATA_SCORE
+
             return {
                 "news_items": [],
                 "news_score_result": NewsScoreResult(

@@ -102,7 +102,7 @@ async def test_ensure_price_history_as_of_date_caps_returned_bars(
 
     # Seed bars: half before cutoff, half after
     before = _make_bars("TSLA", n=100, start=dt.date(2024, 1, 2))  # ends ~May 2024
-    after = _make_bars("TSLA", n=50, start=dt.date(2024, 8, 1))   # Aug–Oct 2024
+    after = _make_bars("TSLA", n=50, start=dt.date(2024, 8, 1))  # Aug–Oct 2024
     await repo.upsert_bars(before + after)
 
     bars = await ensure_price_history(db_session, "TSLA", years=5, provider=None, as_of_date=cutoff)

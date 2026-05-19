@@ -150,7 +150,12 @@ async def test_symbol_filter_isolation() -> None:
             document_type="recommendation_report",
             title=f"{sym}",
             content=f"Symbol: {sym}",
-            metadata={"symbol": sym, "action": "HOLD", "research_run_id": f"run-{sym}", "created_at_ts": 1000},
+            metadata={
+                "symbol": sym,
+                "action": "HOLD",
+                "research_run_id": f"run-{sym}",
+                "created_at_ts": 1000,
+            },
             created_at=datetime.now(UTC),
         )
         await store.add_document(RECOMMENDATION_REPORTS, doc)

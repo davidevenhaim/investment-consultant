@@ -6,6 +6,7 @@ SAFETY RULES enforced by schema:
 - total_confidence_penalty capped at 0.25 — computed by service, never LLM-set.
 - No buy/sell/hold/action/score fields anywhere.
 """
+
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field

@@ -37,6 +37,7 @@ async def test_news_disabled_without_provider(db_session, monkeypatch) -> None:
     """When NEWS_ENABLED=false and no provider injected → no_data score."""
     monkeypatch.setenv("NEWS_ENABLED", "false")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     articles, score = await fetch_news_for_symbol(
@@ -69,10 +70,9 @@ async def test_articles_persisted_to_db(db_session) -> None:
 async def test_nvda_articles_scored_positive(db_session) -> None:
     """NVDA fake article has high positive sentiment — should score above neutral."""
     provider = FakeNewsProvider()
-    _, score = await fetch_news_for_symbol(
-        session=db_session, symbol="NVDA", provider=provider
-    )
+    _, score = await fetch_news_for_symbol(session=db_session, symbol="NVDA", provider=provider)
     from news.scoring import _NEUTRAL_BASE
+
     assert score.score >= _NEUTRAL_BASE - 0.5  # NVDA has 1 positive article, score near/above 7.5
 
 

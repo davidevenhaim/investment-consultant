@@ -29,12 +29,12 @@ async def test_latest_recommendations_with_watchlist_no_recs(api_client) -> None
 
 
 @pytest.mark.asyncio
-async def test_latest_recommendations_includes_score_breakdown_json(api_client: AsyncClient) -> None:
+async def test_latest_recommendations_includes_score_breakdown_json(
+    api_client: AsyncClient,
+) -> None:
     """After a research run, score_breakdown_json must be present and non-null."""
     await api_client.post("/api/v1/watchlist", json={"symbol": "AAPL"})
-    run_resp = await api_client.post(
-        "/api/v1/research-runs", json={"symbols": ["AAPL"]}
-    )
+    run_resp = await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
     assert run_resp.status_code == 201
 
     resp = await api_client.get("/api/v1/recommendations/latest")
@@ -62,9 +62,7 @@ async def test_score_breakdown_json_llm_disabled_by_default(api_client: AsyncCli
 
 
 @pytest.mark.asyncio
-async def test_score_breakdown_json_with_fake_llm_enabled(
-    db_session, fake_memory_store
-) -> None:
+async def test_score_breakdown_json_with_fake_llm_enabled(db_session, fake_memory_store) -> None:
     """With FakeClaudeClient injected, score_breakdown_json.llm_enabled must be true."""
     from unittest.mock import patch
 
@@ -109,8 +107,14 @@ async def test_score_breakdown_json_with_fake_llm_enabled(
         # Build graph with fake LLM client
         from research_graph.graph import build_graph_for_session as real_build
 
-        def build_with_llm(session, market_provider=None, fundamentals_provider=None,
-                           memory_store=None, llm_client=None, news_provider=None):
+        def build_with_llm(
+            session,
+            market_provider=None,
+            fundamentals_provider=None,
+            memory_store=None,
+            llm_client=None,
+            news_provider=None,
+        ):
             return real_build(
                 session,
                 market_provider=market_provider,
@@ -122,9 +126,7 @@ async def test_score_breakdown_json_with_fake_llm_enabled(
 
         mock_build.side_effect = build_with_llm
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/v1/watchlist", json={"symbol": "AAPL"})
             await client.post("/api/v1/research-runs", json={"symbols": ["AAPL"]})
             resp = await client.get("/api/v1/recommendations/latest")
@@ -209,7 +211,9 @@ async def test_latest_includes_amd_watchlist_action(api_client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
-async def test_latest_run_with_single_symbol_excludes_older_symbols(api_client: AsyncClient) -> None:
+async def test_latest_run_with_single_symbol_excludes_older_symbols(
+    api_client: AsyncClient,
+) -> None:
     """After a 3-symbol run, a single-symbol run must return only that one symbol."""
     await api_client.post("/api/v1/research-runs", json={"symbols": ["AAPL", "NVDA", "TSLA"]})
     await api_client.post("/api/v1/research-runs", json={"symbols": ["AMD"]})
@@ -284,17 +288,14 @@ async def test_personalized_symbol_trading_stats_populated_with_trade_history(
     stats = aapl["personalized"]["symbol_trading_stats_json"]
     assert isinstance(stats, dict)
     # Should have at least one completed trade → non-empty stats
-    assert len(stats) > 0, (
-        "symbol_trading_stats_json should be non-empty when trade history exists"
-    )
+    assert len(stats) > 0, "symbol_trading_stats_json should be non-empty when trade history exists"
     assert stats["executions"] == 2
     assert stats["completed_trades"] == 1
     assert stats["win_rate"] == pytest.approx(1.0)
 
     run_recs = await api_client.get(f"/api/v1/research-runs/{run_id}/recommendations")
     run_aapl = next(
-        item for item in run_recs.json()["data"]["recommendations"]
-        if item["symbol"] == "AAPL"
+        item for item in run_recs.json()["data"]["recommendations"] if item["symbol"] == "AAPL"
     )
     assert run_aapl["personalized"]["symbol_trading_stats_json"] == stats
 
@@ -357,8 +358,7 @@ async def test_symbol_trading_stats_do_not_leak_across_users(
         headers=headers_b,
     )
     run_aapl_b = next(
-        item for item in run_recs_b.json()["data"]["recommendations"]
-        if item["symbol"] == "AAPL"
+        item for item in run_recs_b.json()["data"]["recommendations"] if item["symbol"] == "AAPL"
     )
     assert run_aapl_b["personalized"]["symbol_trading_stats_json"] == {}
 
@@ -507,8 +507,7 @@ async def test_final_reason_score_consistent_with_portfolio_context(
     assert match is not None, "final_reason must contain 'Score X/100'"
     reason_score = int(match.group(1))
     assert reason_score == score, (
-        f"Portfolio-adjusted final_reason says Score {reason_score}/100 "
-        f"but neutral.score={score}"
+        f"Portfolio-adjusted final_reason says Score {reason_score}/100 but neutral.score={score}"
     )
     # score_breakdown must also agree
     assert int(neutral["score_breakdown_json"]["total_score"]) == score

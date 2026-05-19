@@ -116,11 +116,10 @@ def build_trade_suggestion(
 ) -> dict[str, object]:
     """Return suggested_trade_json dict."""
     is_buy = personal_action in (
-        RecommendationAction.STRONG_BUY, RecommendationAction.BUY_CANDIDATE
+        RecommendationAction.STRONG_BUY,
+        RecommendationAction.BUY_CANDIDATE,
     )
-    is_reduce = personal_action in (
-        RecommendationAction.REDUCE, RecommendationAction.SELL
-    )
+    is_reduce = personal_action in (RecommendationAction.REDUCE, RecommendationAction.SELL)
 
     if is_buy and target_weight > current_weight and target_weight > 0:
         delta = target_weight - current_weight
@@ -142,9 +141,7 @@ def build_trade_suggestion(
             "current_weight": round(current_weight, 4),
             "weight_delta": round(-delta, 4),
             "estimated_amount": estimated,
-            "rationale": [
-                f"Trim overweight from {current_weight:.0%} to {max_weight:.0%}."
-            ],
+            "rationale": [f"Trim overweight from {current_weight:.0%} to {max_weight:.0%}."],
         }
     return {
         "trade_type": "NONE",

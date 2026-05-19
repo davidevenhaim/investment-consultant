@@ -1,4 +1,5 @@
 """Tests for LLM client implementations."""
+
 import pytest
 from ai.fake_client import FakeClaudeClient
 from ai.interfaces import LLMClient
@@ -10,6 +11,7 @@ async def test_fake_client_returns_valid_json() -> None:
     client = FakeClaudeClient()
     result = await client.complete("test prompt")
     import json
+
     parsed = json.loads(result)
     assert "thesis" in parsed
     assert "risk" in parsed
@@ -20,10 +22,12 @@ async def test_fake_client_returns_valid_json() -> None:
 @pytest.mark.asyncio
 async def test_fake_client_response_has_no_forbidden_fields() -> None:
     import json
+
     client = FakeClaudeClient()
     result = await client.complete("test prompt")
     parsed = json.loads(result)
     from ai.schemas import check_forbidden_keys
+
     assert check_forbidden_keys(parsed) == []
 
 
@@ -37,6 +41,7 @@ async def test_fake_client_fail_raises_llm_error() -> None:
 @pytest.mark.asyncio
 async def test_fake_client_custom_response() -> None:
     import json
+
     custom = {
         "thesis": {
             "symbol": "NVDA",
@@ -86,4 +91,5 @@ def test_fake_client_is_llm_client_subclass() -> None:
 
 def test_anthropic_client_importable() -> None:
     from ai.client import AnthropicLLMClient
+
     assert issubclass(AnthropicLLMClient, LLMClient)

@@ -457,6 +457,7 @@ def test_personalized_no_neutral_adds_error() -> None:
     assert "errors" in result
     assert len(result["errors"]) > 0
 
+
 # ── LLM analysis node ─────────────────────────────────────────────────────────
 
 
@@ -555,6 +556,7 @@ async def test_llm_analysis_node_with_failing_client_writes_warning() -> None:
 def test_neutral_recommendation_without_llm_analysis() -> None:
     """LLM disabled: score/action unchanged, breakdown.llm_enabled=False."""
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     state = _base_state("AAPL")
     state["technical_signals"] = _signals_bullish()
     state["llm_analysis"] = None
@@ -568,14 +570,13 @@ def test_neutral_recommendation_adds_llm_reasons_when_enabled() -> None:
     from ai.fake_client import _FAKE_RESPONSE
     from ai.service import _parse_and_validate
 
-    analysis = _parse_and_validate(
-        __import__("json").dumps(_FAKE_RESPONSE), "AAPL", "fake"
-    )
+    analysis = _parse_and_validate(__import__("json").dumps(_FAKE_RESPONSE), "AAPL", "fake")
     state = _base_state("AAPL")
     state["technical_signals"] = _signals_bullish()
     state["llm_analysis"] = analysis
 
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
     assert any("[LLM thesis]" in r for r in rec.main_reasons)
@@ -592,6 +593,7 @@ def test_neutral_recommendation_adds_llm_risks_when_enabled() -> None:
     state["llm_analysis"] = analysis
 
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
     # LLM risks and counterargument should appear
@@ -617,6 +619,7 @@ def test_neutral_recommendation_confidence_penalty_applied() -> None:
     state["llm_analysis"] = analysis
 
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
 
@@ -646,6 +649,7 @@ def test_neutral_recommendation_strong_buy_capped_by_critic() -> None:
     from unittest.mock import patch
 
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     with patch(
         "research_graph.nodes.neutral_recommendation.score_to_action",
         return_value=RecommendationAction.STRONG_BUY,
@@ -673,6 +677,7 @@ def test_llm_cannot_upgrade_action() -> None:
     state["llm_analysis"] = analysis
 
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     result = neutral_recommendation(state)
     rec = result["neutral_rec"]
     # LLM cannot change action — it's still determined by the score
@@ -694,6 +699,7 @@ def test_score_breakdown_includes_llm_metadata() -> None:
     state["llm_analysis"] = analysis
 
     from research_graph.nodes.neutral_recommendation import neutral_recommendation
+
     result = neutral_recommendation(state)
     bd = result["score_breakdown"]
     assert bd.llm_enabled is True
@@ -770,7 +776,9 @@ def test_personalized_buy_with_no_position_stays_buy():
     state["data_quality_score"] = 0.95
     state["fundamentals_data_quality"] = 0.9
     state["portfolio_context"] = {
-        "max_single_stock_weight": 0.15, "total_equity": 50000.0, "risk_level": "MEDIUM"
+        "max_single_stock_weight": 0.15,
+        "total_equity": 50000.0,
+        "risk_level": "MEDIUM",
     }
     state["strategy_config"] = {
         "risk_policy": {"max_single_stock_weight": 0.15, "min_confidence_to_buy": 0.65}

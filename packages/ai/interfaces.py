@@ -1,4 +1,5 @@
 """LLM client abstract interface."""
+
 from abc import ABC, abstractmethod
 
 

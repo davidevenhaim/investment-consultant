@@ -127,8 +127,7 @@ def make_load_portfolio_context(
                     m for m in neutral.missing_details if "portfolio" not in m.lower()
                 ]
                 new_main_risks = [
-                    r for r in neutral.main_risks
-                    if "portfolio context pending" not in r.lower()
+                    r for r in neutral.main_risks if "portfolio context pending" not in r.lower()
                 ]
                 new_neutral = NeutralRecState(
                     **{
@@ -211,7 +210,8 @@ def make_load_portfolio_context(
                 if neutral is not None
                 else (
                     len(completed) / (len(completed) + len(missing))
-                    if (len(completed) + len(missing)) > 0 else 0.0
+                    if (len(completed) + len(missing)) > 0
+                    else 0.0
                 )
             )
 

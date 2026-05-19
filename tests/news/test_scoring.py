@@ -51,8 +51,7 @@ def test_single_strong_positive_capped_at_10():
 def test_three_positive_articles_cap_raises_to_12_5():
     """≥3 independent positive signals → cap rises to 12.5."""
     articles = [
-        _article(sentiment=1.0, importance=1.0, relevance=1.0, article_id=f"p{i}")
-        for i in range(3)
+        _article(sentiment=1.0, importance=1.0, relevance=1.0, article_id=f"p{i}") for i in range(3)
     ]
     result = score_news_articles(articles)
     assert result.score == pytest.approx(12.5, abs=0.01)
@@ -92,7 +91,7 @@ def test_single_article_max_contribution_three():
 def test_score_bounded_0_to_15():
     """Score always in [0, 15]."""
     for sentiment in [-1.0, -0.5, 0.0, 0.5, 1.0]:
-        articles = [_article(sentiment=sentiment, article_id=f"s{int(sentiment*10)}")]
+        articles = [_article(sentiment=sentiment, article_id=f"s{int(sentiment * 10)}")]
         result = score_news_articles(articles)
         assert 0.0 <= result.score <= 15.0
 

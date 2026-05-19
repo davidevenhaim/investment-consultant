@@ -72,11 +72,11 @@ _TARGET_WEIGHTS: dict[str, float] = {
     "STRONG_BUY": 0.20,
     "BUY_CANDIDATE": 0.10,
     "BUY": 0.15,
-    "HOLD": 0.0,          # no change
-    "WATCHLIST": 0.0,     # no change
-    "NO_ACTION": 0.0,     # no change
-    "REDUCE": -0.50,      # sentinel: reduce by 50 %
-    "SELL": -1.0,         # sentinel: close full position
+    "HOLD": 0.0,  # no change
+    "WATCHLIST": 0.0,  # no change
+    "NO_ACTION": 0.0,  # no change
+    "REDUCE": -0.50,  # sentinel: reduce by 50 %
+    "SELL": -1.0,  # sentinel: close full position
 }
 
 _BUY_ACTIONS = {"STRONG_BUY", "BUY_CANDIDATE", "BUY"}
@@ -95,7 +95,7 @@ _PRICE_TOLERANCE_DAYS = 5
 class _Position:
     symbol: str
     qty: float = 0.0
-    avg_cost: float = 0.0   # volume-weighted average cost
+    avg_cost: float = 0.0  # volume-weighted average cost
 
     def update_buy(self, qty: float, price: float) -> None:
         total_cost = self.avg_cost * self.qty + price * qty
@@ -120,9 +120,7 @@ class _SimState:
     max_drawdown: float = 0.0
 
     def equity(self, prices: dict[str, float]) -> float:
-        pos_val = sum(
-            p.qty * prices.get(p.symbol, 0.0) for p in self.positions.values()
-        )
+        pos_val = sum(p.qty * prices.get(p.symbol, 0.0) for p in self.positions.values())
         return self.cash + pos_val
 
     def position_weight(self, symbol: str, prices: dict[str, float]) -> float:
@@ -211,6 +209,7 @@ def _make_trade_row(
     raw: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from db.models import AdvisorBacktestTrade
+
     return {
         "model_class": AdvisorBacktestTrade,
         "backtest_run_id": backtest_run_id,
@@ -324,16 +323,18 @@ def _build_enriched_summary(
         unreal_pnl = mv - cost_basis_total if last_p is not None else 0.0
         unreal_ret = unreal_pnl / cost_basis_total if cost_basis_total > 0 else 0.0
         weight = mv / final_equity if final_equity > 0 else 0.0
-        open_positions.append({
-            "symbol": sym,
-            "quantity": round(pos.qty, 6),
-            "avg_cost": round(pos.avg_cost, 4),
-            "last_price": round(last_p, 4) if last_p is not None else None,
-            "market_value": round(mv, 4),
-            "unrealized_pnl": round(unreal_pnl, 4),
-            "unrealized_return_pct": round(unreal_ret, 6),
-            "weight": round(weight, 6),
-        })
+        open_positions.append(
+            {
+                "symbol": sym,
+                "quantity": round(pos.qty, 6),
+                "avg_cost": round(pos.avg_cost, 4),
+                "last_price": round(last_p, 4) if last_p is not None else None,
+                "market_value": round(mv, 4),
+                "unrealized_pnl": round(unreal_pnl, 4),
+                "unrealized_return_pct": round(unreal_ret, 6),
+                "weight": round(weight, 6),
+            }
+        )
     open_positions.sort(key=lambda x: x["market_value"], reverse=True)
 
     # ── closed_positions (from SELL / REDUCE trade rows) ──────────────────────
@@ -352,15 +353,17 @@ def _build_enriched_summary(
             if (pnl is not None and cost_basis is not None and cost_basis > 0)
             else None
         )
-        closed_positions.append({
-            "symbol": t["symbol"],
-            "trade_type": t["trade_type"],
-            "quantity": round(qty, 6),
-            "entry_avg_cost": round(avg_cost, 4) if avg_cost is not None else None,
-            "exit_price": round(exit_price, 4),
-            "realized_pnl": round(pnl, 4) if pnl is not None else None,
-            "realized_return_pct": round(ret, 6) if ret is not None else None,
-        })
+        closed_positions.append(
+            {
+                "symbol": t["symbol"],
+                "trade_type": t["trade_type"],
+                "quantity": round(qty, 6),
+                "entry_avg_cost": round(avg_cost, 4) if avg_cost is not None else None,
+                "exit_price": round(exit_price, 4),
+                "realized_pnl": round(pnl, 4) if pnl is not None else None,
+                "realized_return_pct": round(ret, 6) if ret is not None else None,
+            }
+        )
 
     # ── best / worst realized trades ──────────────────────────────────────────
     scored = [c for c in closed_positions if c["realized_pnl"] is not None]
@@ -487,9 +490,7 @@ async def run_advisor_backtest(
                     ResearchRun.metadata_json.contains({"scenario": scenario_name})
                 )
         elif _src == "REAL":
-            source_filters.append(
-                not_(ResearchRun.metadata_json.contains({"scenario_seed": True}))
-            )
+            source_filters.append(not_(ResearchRun.metadata_json.contains({"scenario_seed": True})))
         # ALL: no extra filters
 
         runs_result = await session.execute(
@@ -536,10 +537,7 @@ async def run_advisor_backtest(
             qty = float(ip["quantity"])
             entry_price, _ = _find_price(start_date, bars_by_symbol, sym, forward_only=True)
             if entry_price is None:
-                msg = (
-                    f"Cannot price initial position {sym}: "
-                    f"no price bars found near {start_date}."
-                )
+                msg = f"Cannot price initial position {sym}: no price bars found near {start_date}."
                 raise ValueError(msg)
             total_ip_cost += qty * entry_price
             seeded.append((sym, qty, entry_price))
@@ -556,10 +554,7 @@ async def run_advisor_backtest(
 
     # 5. Build sorted list of trading calendar dates in range
     all_bar_dates = (
-        d
-        for bar_dates in bars_by_symbol.values()
-        for d in bar_dates
-        if start_date <= d <= end_date
+        d for bar_dates in bars_by_symbol.values() for d in bar_dates if start_date <= d <= end_date
     )
     trading_dates = sorted(set(all_bar_dates))
 
@@ -595,42 +590,44 @@ async def run_advisor_backtest(
         # Look up execution price
         exec_price, exec_date = _find_price(rec_date, bars_by_symbol, symbol, forward_only=True)
 
-        trade_date_dt = dt.datetime.combine(
-            exec_date or rec_date, dt.time(16, 0), tzinfo=UTC
-        )
+        trade_date_dt = dt.datetime.combine(exec_date or rec_date, dt.time(16, 0), tzinfo=UTC)
 
         # SKIP actions — record skip, continue
         if action in _SKIP_ACTIONS:
             skipped += 1
-            trade_dicts.append(_make_trade_row(
-                backtest_run_id=None,
-                user_id=user_id,
-                symbol=symbol,
-                recommendation_id=rec.id,
-                research_run_id=rec.research_run_id,
-                action=action,
-                trade_type="SKIP",
-                trade_date=trade_date_dt,
-                reason="hold_or_no_action",
-                raw={"rec_action": action},
-            ))
+            trade_dicts.append(
+                _make_trade_row(
+                    backtest_run_id=None,
+                    user_id=user_id,
+                    symbol=symbol,
+                    recommendation_id=rec.id,
+                    research_run_id=rec.research_run_id,
+                    action=action,
+                    trade_type="SKIP",
+                    trade_date=trade_date_dt,
+                    reason="hold_or_no_action",
+                    raw={"rec_action": action},
+                )
+            )
             continue
 
         # Missing execution price
         if exec_price is None:
             skipped += 1
-            trade_dicts.append(_make_trade_row(
-                backtest_run_id=None,
-                user_id=user_id,
-                symbol=symbol,
-                recommendation_id=rec.id,
-                research_run_id=rec.research_run_id,
-                action=action,
-                trade_type="SKIP",
-                trade_date=trade_date_dt,
-                reason="missing_execution_price",
-                raw={"rec_date": str(rec_date)},
-            ))
+            trade_dicts.append(
+                _make_trade_row(
+                    backtest_run_id=None,
+                    user_id=user_id,
+                    symbol=symbol,
+                    recommendation_id=rec.id,
+                    research_run_id=rec.research_run_id,
+                    action=action,
+                    trade_type="SKIP",
+                    trade_date=trade_date_dt,
+                    reason="missing_execution_price",
+                    raw={"rec_date": str(rec_date)},
+                )
+            )
             continue
 
         # Get current prices for weight calculation
@@ -646,12 +643,19 @@ async def run_advisor_backtest(
 
         if action == "SELL":
             if pos_qty_before <= 0:
-                trade_dicts.append(_make_trade_row(
-                    backtest_run_id=None, user_id=user_id, symbol=symbol,
-                    recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                    action=action, trade_type="SKIP", trade_date=trade_date_dt,
-                    reason="no_position_to_sell",
-                ))
+                trade_dicts.append(
+                    _make_trade_row(
+                        backtest_run_id=None,
+                        user_id=user_id,
+                        symbol=symbol,
+                        recommendation_id=rec.id,
+                        research_run_id=rec.research_run_id,
+                        action=action,
+                        trade_type="SKIP",
+                        trade_date=trade_date_dt,
+                        reason="no_position_to_sell",
+                    )
+                )
                 skipped += 1
                 continue
             avg_cost_at_exit = pos.avg_cost
@@ -665,23 +669,40 @@ async def run_advisor_backtest(
             pos.qty = 0.0
             pos.avg_cost = 0.0
             state.positions[symbol] = pos
-            trade_dicts.append(_make_trade_row(
-                backtest_run_id=None, user_id=user_id, symbol=symbol,
-                recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                action=action, trade_type="SELL", trade_date=trade_date_dt,
-                price=exec_price, quantity=pos_qty_before,
-                cash_delta=proceeds, position_before=pos_qty_before, position_after=0.0,
-                raw={"pnl": round(pnl, 4), "avg_cost": round(avg_cost_at_exit, 4)},
-            ))
+            trade_dicts.append(
+                _make_trade_row(
+                    backtest_run_id=None,
+                    user_id=user_id,
+                    symbol=symbol,
+                    recommendation_id=rec.id,
+                    research_run_id=rec.research_run_id,
+                    action=action,
+                    trade_type="SELL",
+                    trade_date=trade_date_dt,
+                    price=exec_price,
+                    quantity=pos_qty_before,
+                    cash_delta=proceeds,
+                    position_before=pos_qty_before,
+                    position_after=0.0,
+                    raw={"pnl": round(pnl, 4), "avg_cost": round(avg_cost_at_exit, 4)},
+                )
+            )
 
         elif action == "REDUCE":
             if pos_qty_before <= 0:
-                trade_dicts.append(_make_trade_row(
-                    backtest_run_id=None, user_id=user_id, symbol=symbol,
-                    recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                    action=action, trade_type="SKIP", trade_date=trade_date_dt,
-                    reason="no_position_to_reduce",
-                ))
+                trade_dicts.append(
+                    _make_trade_row(
+                        backtest_run_id=None,
+                        user_id=user_id,
+                        symbol=symbol,
+                        recommendation_id=rec.id,
+                        research_run_id=rec.research_run_id,
+                        action=action,
+                        trade_type="SKIP",
+                        trade_date=trade_date_dt,
+                        reason="no_position_to_reduce",
+                    )
+                )
                 skipped += 1
                 continue
             sell_qty = pos_qty_before * 0.5
@@ -697,26 +718,42 @@ async def run_advisor_backtest(
                 pos.qty = 0.0
                 pos.avg_cost = 0.0
             state.positions[symbol] = pos
-            trade_dicts.append(_make_trade_row(
-                backtest_run_id=None, user_id=user_id, symbol=symbol,
-                recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                action=action, trade_type="REDUCE", trade_date=trade_date_dt,
-                price=exec_price, quantity=sell_qty,
-                cash_delta=proceeds, position_before=pos_qty_before,
-                position_after=pos.qty,
-                raw={"pnl": round(pnl, 4), "avg_cost": round(pos.avg_cost, 4)},
-            ))
+            trade_dicts.append(
+                _make_trade_row(
+                    backtest_run_id=None,
+                    user_id=user_id,
+                    symbol=symbol,
+                    recommendation_id=rec.id,
+                    research_run_id=rec.research_run_id,
+                    action=action,
+                    trade_type="REDUCE",
+                    trade_date=trade_date_dt,
+                    price=exec_price,
+                    quantity=sell_qty,
+                    cash_delta=proceeds,
+                    position_before=pos_qty_before,
+                    position_after=pos.qty,
+                    raw={"pnl": round(pnl, 4), "avg_cost": round(pos.avg_cost, 4)},
+                )
+            )
 
         elif action in _BUY_ACTIONS:
             current_w = state.position_weight(symbol, current_prices)
             if current_w >= target_w - 0.001:
-                trade_dicts.append(_make_trade_row(
-                    backtest_run_id=None, user_id=user_id, symbol=symbol,
-                    recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                    action=action, trade_type="SKIP", trade_date=trade_date_dt,
-                    reason="already_at_or_above_target",
-                    raw={"current_weight": round(current_w, 4), "target_weight": target_w},
-                ))
+                trade_dicts.append(
+                    _make_trade_row(
+                        backtest_run_id=None,
+                        user_id=user_id,
+                        symbol=symbol,
+                        recommendation_id=rec.id,
+                        research_run_id=rec.research_run_id,
+                        action=action,
+                        trade_type="SKIP",
+                        trade_date=trade_date_dt,
+                        reason="already_at_or_above_target",
+                        raw={"current_weight": round(current_w, 4), "target_weight": target_w},
+                    )
+                )
                 skipped += 1
                 continue
 
@@ -727,13 +764,20 @@ async def run_advisor_backtest(
             buy_value = min(buy_value, state.cash)
 
             if buy_value < _MIN_PURCHASE_CASH:
-                trade_dicts.append(_make_trade_row(
-                    backtest_run_id=None, user_id=user_id, symbol=symbol,
-                    recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                    action=action, trade_type="SKIP", trade_date=trade_date_dt,
-                    reason="insufficient_cash",
-                    raw={"buy_value": round(buy_value, 4), "cash": round(state.cash, 4)},
-                ))
+                trade_dicts.append(
+                    _make_trade_row(
+                        backtest_run_id=None,
+                        user_id=user_id,
+                        symbol=symbol,
+                        recommendation_id=rec.id,
+                        research_run_id=rec.research_run_id,
+                        action=action,
+                        trade_type="SKIP",
+                        trade_date=trade_date_dt,
+                        reason="insufficient_cash",
+                        raw={"buy_value": round(buy_value, 4), "cash": round(state.cash, 4)},
+                    )
+                )
                 skipped += 1
                 continue
 
@@ -743,15 +787,24 @@ async def run_advisor_backtest(
             if symbol not in state.positions:
                 state.positions[symbol] = _Position(symbol)
             state.positions[symbol].update_buy(qty, exec_price)
-            trade_dicts.append(_make_trade_row(
-                backtest_run_id=None, user_id=user_id, symbol=symbol,
-                recommendation_id=rec.id, research_run_id=rec.research_run_id,
-                action=action, trade_type="BUY", trade_date=trade_date_dt,
-                price=exec_price, quantity=qty,
-                cash_delta=-cost, position_before=pos_qty_before,
-                position_after=state.positions[symbol].qty,
-                raw={"target_weight": target_w, "buy_value": round(buy_value, 4)},
-            ))
+            trade_dicts.append(
+                _make_trade_row(
+                    backtest_run_id=None,
+                    user_id=user_id,
+                    symbol=symbol,
+                    recommendation_id=rec.id,
+                    research_run_id=rec.research_run_id,
+                    action=action,
+                    trade_type="BUY",
+                    trade_date=trade_date_dt,
+                    price=exec_price,
+                    quantity=qty,
+                    cash_delta=-cost,
+                    position_before=pos_qty_before,
+                    position_after=state.positions[symbol].qty,
+                    raw={"target_weight": target_w, "buy_value": round(buy_value, 4)},
+                )
+            )
         # ignore unknown actions silently
 
     # 8. Build equity curve: replay executed trades chronologically per date (no lookahead)
@@ -764,9 +817,7 @@ async def run_advisor_backtest(
             bench_start_price = benchmark_bars[first_bench]
 
     executed_seq: list[tuple[int, dict[str, Any]]] = [
-        (i, t)
-        for i, t in enumerate(trade_dicts)
-        if t["trade_type"] in ("BUY", "SELL", "REDUCE")
+        (i, t) for i, t in enumerate(trade_dicts) if t["trade_type"] in ("BUY", "SELL", "REDUCE")
     ]
     executed_seq.sort(key=lambda it: (it[1]["trade_date"], it[0]))
 
@@ -807,14 +858,16 @@ async def run_advisor_backtest(
         if bench_start_price and d in benchmark_bars and initial_cash > 0:
             bench_val = initial_cash * (benchmark_bars[d] / bench_start_price)
 
-        equity_point_rows.append({
-            "date": d,
-            "equity": round(eq, 4),
-            "cash": round(curve_state.cash, 4),
-            "positions_value": round(max(pos_val, 0.0), 4),
-            "drawdown_pct": round(dd, 8),
-            "benchmark_value": round(bench_val, 4) if bench_val else None,
-        })
+        equity_point_rows.append(
+            {
+                "date": d,
+                "equity": round(eq, 4),
+                "cash": round(curve_state.cash, 4),
+                "positions_value": round(max(pos_val, 0.0), 4),
+                "drawdown_pct": round(dd, 8),
+                "benchmark_value": round(bench_val, 4) if bench_val else None,
+            }
+        )
 
     # 9. Final equity = last curve point (fills after end_date excluded from curve)
     final_equity = last_equity

@@ -87,6 +87,7 @@ class TradingProfile:
 
 # ── FIFO matching ─────────────────────────────────────────────────────────────
 
+
 def _fifo_match(executions: Sequence[IBKRExecution]) -> tuple[list[TradePair], dict[str, float]]:
     """Match BUY→SELL pairs via FIFO. Returns (completed_pairs, open_qty_by_symbol)."""
     buys_by_symbol: dict[str, list[IBKRExecution]] = defaultdict(list)
@@ -121,9 +122,7 @@ def _fifo_match(executions: Sequence[IBKRExecution]) -> tuple[list[TradePair], d
                 else:
                     # partial fill — replace first buy with remaining qty
                     remaining_qty = buy.quantity - matched
-                    partial = IBKRExecution(
-                        **{**buy.model_dump(), "quantity": remaining_qty}
-                    )
+                    partial = IBKRExecution(**{**buy.model_dump(), "quantity": remaining_qty})
                     buys_by_symbol[ex.symbol][0] = partial
                     open_qty[ex.symbol] -= matched
 
@@ -131,6 +130,7 @@ def _fifo_match(executions: Sequence[IBKRExecution]) -> tuple[list[TradePair], d
 
 
 # ── individual metrics ────────────────────────────────────────────────────────
+
 
 def _win_rate(pairs: list[TradePair]) -> float | None:
     if not pairs:
@@ -188,7 +188,7 @@ def _concentration_score(executions: Sequence[IBKRExecution]) -> float | None:
     if total == 0:
         return None
     shares = [v / total for v in vol_by_symbol.values()]
-    return sum(s ** 2 for s in shares)
+    return sum(s**2 for s in shares)
 
 
 def _recency_bias_score(
@@ -216,6 +216,7 @@ def _recency_bias_score(
 
 # ── behavioral flag detection ─────────────────────────────────────────────────
 
+
 def _detect_flags(
     win_rate_val: float | None,
     disposition_score: float | None,
@@ -235,6 +236,7 @@ def _detect_flags(
 
 
 # ── per-symbol stats ──────────────────────────────────────────────────────────
+
 
 def _per_symbol_stats(
     executions: Sequence[IBKRExecution],
@@ -262,6 +264,7 @@ def _per_symbol_stats(
 
 
 # ── public entry point ────────────────────────────────────────────────────────
+
 
 def build_trading_profile(
     executions: Sequence[IBKRExecution],

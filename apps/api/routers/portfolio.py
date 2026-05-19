@@ -410,9 +410,7 @@ async def update_broker_account(
     updates = body.model_dump(exclude_none=True)
     account = await repo.update(broker_account_id, **updates)
     await db.commit()
-    return api_response(
-        BrokerAccountResponse.model_validate(account).model_dump(), request
-    )
+    return api_response(BrokerAccountResponse.model_validate(account).model_dump(), request)
 
 
 @router.post("/broker-accounts/{broker_account_id}/sync-ibkr")
@@ -512,9 +510,7 @@ async def sync_flex_global(
     from portfolio.trade_history_service import sync_ibkr_flex_executions  # noqa: PLC0415
 
     try:
-        result = await sync_ibkr_flex_executions(
-            db, broker_account.id, token, query_id
-        )
+        result = await sync_ibkr_flex_executions(db, broker_account.id, token, query_id)
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -569,9 +565,7 @@ async def sync_flex_for_account(
     from portfolio.trade_history_service import sync_ibkr_flex_executions  # noqa: PLC0415
 
     try:
-        result = await sync_ibkr_flex_executions(
-            db, broker_account_id, token, query_id
-        )
+        result = await sync_ibkr_flex_executions(db, broker_account_id, token, query_id)
         await db.commit()
     except IntegrityError:
         await db.rollback()

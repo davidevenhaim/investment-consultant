@@ -1,4 +1,5 @@
 """Tests for LLM output schemas — validation, forbidden fields, penalty caps."""
+
 import pytest
 from ai.schemas import (
     CombinedLLMAnalysis,
@@ -152,6 +153,7 @@ def test_empty_analysis_is_valid() -> None:
 
 def test_empty_analysis_has_no_forbidden_fields() -> None:
     import json
+
     ea = empty_analysis("AAPL")
     dumped = json.dumps(ea.model_dump())
     assert '"action"' not in dumped

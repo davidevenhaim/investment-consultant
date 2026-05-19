@@ -173,9 +173,7 @@ async def reset_scenario_for_user(
     run_ids_result = await session.execute(
         select(ResearchRun.id).where(
             ResearchRun.user_id == user_id,
-            ResearchRun.metadata_json.contains(
-                {"scenario_seed": True, "scenario": scenario_name}
-            ),
+            ResearchRun.metadata_json.contains({"scenario_seed": True, "scenario": scenario_name}),
         )
     )
     run_ids = [row[0] for row in run_ids_result.fetchall()]
@@ -183,13 +181,9 @@ async def reset_scenario_for_user(
         return 0
 
     await session.execute(
-        delete(NeutralRecommendation).where(
-            NeutralRecommendation.research_run_id.in_(run_ids)
-        )
+        delete(NeutralRecommendation).where(NeutralRecommendation.research_run_id.in_(run_ids))
     )
-    await session.execute(
-        delete(ResearchRun).where(ResearchRun.id.in_(run_ids))
-    )
+    await session.execute(delete(ResearchRun).where(ResearchRun.id.in_(run_ids)))
     await session.flush()
     return len(run_ids)
 
@@ -297,10 +291,7 @@ async def _run(args: argparse.Namespace) -> None:
                     f" run(s) for user {user_id}."
                 )
             else:
-                print(
-                    f"Reset: no existing '{scenario_name}' rows found"
-                    f" for user {user_id}."
-                )
+                print(f"Reset: no existing '{scenario_name}' rows found for user {user_id}.")
         else:
             print(
                 f"WARNING: --reset not passed. Duplicate seeding may produce duplicate trades "

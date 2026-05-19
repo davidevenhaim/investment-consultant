@@ -30,9 +30,7 @@ async def latest_recommendations(
 
     if recs:
         neutral_ids = [r.id for r in recs]
-        personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(
-            neutral_ids
-        )
+        personalized_by_neutral = await rec_repo.get_latest_personalized_by_neutral_ids(neutral_ids)
         result = []
         for r in recs:
             pers = personalized_by_neutral.get(r.id)

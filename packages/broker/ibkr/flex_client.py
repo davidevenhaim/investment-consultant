@@ -201,13 +201,9 @@ class FlexClient:
                 resp = await client.get(self._send_url, params=params)
                 resp.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise IBKRFlexError(
-                f"Flex SendRequest timed out after {self._timeout}s"
-            ) from exc
+            raise IBKRFlexError(f"Flex SendRequest timed out after {self._timeout}s") from exc
         except httpx.HTTPStatusError as exc:
-            raise IBKRFlexError(
-                f"Flex SendRequest HTTP error {exc.response.status_code}"
-            ) from exc
+            raise IBKRFlexError(f"Flex SendRequest HTTP error {exc.response.status_code}") from exc
         except httpx.RequestError as exc:
             raise IBKRFlexError(f"Flex SendRequest network error: {exc}") from exc
 
@@ -279,9 +275,7 @@ class FlexClient:
                     resp = await client.get(url, params=params)
                     resp.raise_for_status()
             except httpx.TimeoutException as exc:
-                raise IBKRFlexError(
-                    f"Flex GetStatement timed out after {self._timeout}s"
-                ) from exc
+                raise IBKRFlexError(f"Flex GetStatement timed out after {self._timeout}s") from exc
             except httpx.HTTPStatusError as exc:
                 raise IBKRFlexError(
                     f"Flex GetStatement HTTP error {exc.response.status_code}"
@@ -323,8 +317,7 @@ class FlexClient:
                 await asyncio.sleep(self._poll_interval)
 
         raise IBKRFlexError(
-            f"Flex statement not ready after {self._max_polls} polls "
-            f"(ref={reference_code})"
+            f"Flex statement not ready after {self._max_polls} polls (ref={reference_code})"
         )
 
     async def fetch_statement(self, token: str, query_id: str) -> str:

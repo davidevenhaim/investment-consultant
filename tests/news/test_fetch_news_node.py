@@ -59,6 +59,7 @@ async def test_fetch_news_node_no_provider_no_errors(db_session, monkeypatch) ->
     """Without a provider and NEWS_ENABLED=false, node returns no_data without crashing."""
     monkeypatch.setenv("NEWS_ENABLED", "false")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     node = make_fetch_news(db_session, news_provider=None)

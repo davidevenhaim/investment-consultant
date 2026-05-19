@@ -62,7 +62,7 @@ async def test_fetch_market_data_node_as_of_date_caps_bars(db_session) -> None:
 
     # Seed bars: before AND after cutoff
     before = _make_bars("AAPL", start=dt.date(2024, 1, 2), n=120)  # ends ~Jun 2024
-    after = _make_bars("AAPL", start=dt.date(2024, 8, 1), n=40)   # Aug–Sep 2024
+    after = _make_bars("AAPL", start=dt.date(2024, 8, 1), n=40)  # Aug–Sep 2024
     await repo.upsert_bars(before + after)
 
     state = _make_state("AAPL", as_of_date=str(cutoff))

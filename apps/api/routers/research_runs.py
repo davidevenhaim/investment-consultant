@@ -418,9 +418,7 @@ async def get_replay_batch_status(
     progress_pct = round(terminal_count / total * 100, 1) if total else 0.0
 
     as_of_dates: list[str] = [
-        str(r.metadata_json["as_of_date"])
-        for r in runs
-        if r.metadata_json.get("as_of_date")
+        str(r.metadata_json["as_of_date"]) for r in runs if r.metadata_json.get("as_of_date")
     ]
     started_ats = [r.started_at for r in runs if r.started_at is not None]
     finished_ats = [r.finished_at for r in runs if r.finished_at is not None]
@@ -438,9 +436,7 @@ async def get_replay_batch_status(
             delta = (latest_finished - earliest_started).total_seconds()
             elapsed_seconds = round(delta, 1) if delta >= 0 else None
         else:
-            elapsed_seconds = round(
-                (_dt.datetime.now(UTC) - earliest_started).total_seconds(), 1
-            )
+            elapsed_seconds = round((_dt.datetime.now(UTC) - earliest_started).total_seconds(), 1)
 
     run_items = [
         {
@@ -522,10 +518,7 @@ async def create_replay_batch_backtest(
 
     ip_dicts: list[dict[str, Any]] | None = None
     if body.initial_positions:
-        ip_dicts = [
-            {"symbol": ip.symbol, "quantity": ip.quantity}
-            for ip in body.initial_positions
-        ]
+        ip_dicts = [{"symbol": ip.symbol, "quantity": ip.quantity} for ip in body.initial_positions]
 
     assumptions = {
         "source": "replay_batch_backtest",
@@ -600,8 +593,7 @@ async def get_replay_batch_report(
 
     # Map run_id → as_of_date for point construction
     run_to_date: dict[uuid_mod.UUID, str] = {
-        r.id: str(r.metadata_json.get("as_of_date", ""))
-        for r in completed
+        r.id: str(r.metadata_json.get("as_of_date", "")) for r in completed
     }
 
     # Fetch all neutral recs for these runs in one query
@@ -659,3 +651,209 @@ async def get_replay_batch_report(
         },
         request,
     )
+
+
+@router.post("/historical-replay/{replay_batch_id}/evaluation", status_code=201)
+async def create_replay_batch_evaluation(
+    replay_batch_id: str,
+    body: ReplayBatchBacktestRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Run a combined evaluation for a completed historical replay batch.
+
+    Combines batch run counts, per-symbol recommendation timeline (from the
+    replay report), and a follow-the-advisor backtest (portfolio P&L, trades).
+
+    Returns 404 if batch not found or belongs to another user.
+    Returns 422 if no completed runs exist.
+    No LLM calls. Deterministic.
+    """
+    import datetime as _dt  # noqa: PLC0415
+
+    from backtesting.advisor_simulation import run_advisor_backtest  # noqa: PLC0415
+    from backtesting.replay_evaluation import build_evaluation  # noqa: PLC0415
+    from backtesting.replay_report import (  # noqa: PLC0415
+        build_report_point,
+        build_timeline_changes,
+        build_timeline_summary,
+    )
+    from sqlalchemy.orm import selectinload  # noqa: PLC0415
+
+    # ── 1. Validate batch ──────────────────────────────────────────────────────
+    repo = ResearchRunRepository(db)
+    all_runs = await repo.get_by_replay_batch_id(replay_batch_id, current_user.user_id)
+    if not all_runs:
+        raise HTTPException(status_code=404, detail=f"Replay batch {replay_batch_id} not found.")
+
+    completed = [r for r in all_runs if r.status == ResearchRunStatus.COMPLETED.value]
+    if not completed:
+        raise HTTPException(
+            status_code=422,
+            detail="No completed runs in this replay batch. Wait for runs to finish and retry.",
+        )
+
+    # ── 2. Run counts ──────────────────────────────────────────────────────────
+    counts: dict[str, int] = {}
+    for r in all_runs:
+        counts[r.status] = counts.get(r.status, 0) + 1
+    total = len(all_runs)
+    run_counts = {
+        "total": total,
+        "completed": counts.get("COMPLETED", 0),
+        "failed": counts.get("FAILED", 0),
+        "queued": counts.get("QUEUED", 0),
+        "running": counts.get("RUNNING", 0),
+    }
+
+    # ── 3. Build replay report timelines (same logic as get_replay_batch_report) ─
+    run_to_date: dict[uuid_mod.UUID, str] = {
+        r.id: str(r.metadata_json.get("as_of_date", "")) for r in completed
+    }
+
+    rec_repo = RecommendationRepository(db)
+    neutrals = await rec_repo.get_neutral_recs_by_run_ids([r.id for r in completed])
+    neutral_ids = [n.id for n in neutrals]
+    personalized_map = await rec_repo.get_latest_personalized_by_neutral_ids(neutral_ids)
+
+    symbol_points: dict[str, list[dict[str, Any]]] = {}
+    for n in neutrals:
+        aod = run_to_date.get(n.research_run_id, "")
+        pers = personalized_map.get(n.id)
+        point = build_report_point(
+            run_id=str(n.research_run_id),
+            as_of_date=aod,
+            neutral_action=n.action,
+            neutral_score=n.score,
+            personalized_action=pers.personal_action if pers else None,
+            price_at_recommendation=(
+                float(n.price_at_recommendation) if n.price_at_recommendation else None
+            ),
+            score_breakdown=n.score_breakdown_json or {},
+            missing_details=n.missing_details_json or [],
+            created_at=n.created_at.isoformat() if n.created_at else None,
+        )
+        symbol_points.setdefault(n.symbol.upper(), []).append(point)
+
+    for pts in symbol_points.values():
+        pts.sort(key=lambda p: p["as_of_date"])
+
+    timelines = [
+        {
+            "symbol": sym,
+            "points": pts,
+            "summary": build_timeline_summary(pts),
+            "changes": build_timeline_changes(pts),
+        }
+        for sym, pts in sorted(symbol_points.items())
+    ]
+    symbols = sorted(symbol_points.keys())
+
+    # ── 4. Date range from as_of_dates ─────────────────────────────────────────
+    all_as_of = [v for v in run_to_date.values() if v]
+    start_date_str = min(all_as_of) if all_as_of else ""
+    end_date_str = max(all_as_of) if all_as_of else ""
+
+    as_of_dates = [
+        _dt.date.fromisoformat(r.metadata_json["as_of_date"])
+        for r in completed
+        if r.metadata_json.get("as_of_date")
+    ]
+    start_date = min(as_of_dates)
+    end_date = max(as_of_dates)
+
+    # ── 5. Run advisor backtest with pinned completed run IDs ──────────────────
+    ip_dicts: list[dict[str, Any]] | None = None
+    if body.initial_positions:
+        ip_dicts = [{"symbol": ip.symbol, "quantity": ip.quantity} for ip in body.initial_positions]
+
+    assumptions = {
+        "source": "replay_batch_evaluation",
+        "replay_batch_id": replay_batch_id,
+        "completed_run_count": len(completed),
+        "total_run_count": total,
+    }
+
+    try:
+        backtest_run = await run_advisor_backtest(
+            session=db,
+            user_id=current_user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=body.initial_cash,
+            benchmark_symbol=body.benchmark_symbol,
+            name=body.name or f"Evaluation {replay_batch_id[:8]}",
+            assumptions=assumptions,
+            recommendation_source="REPLAY_BATCH",
+            pinned_run_ids=[r.id for r in completed],
+            initial_positions=ip_dicts,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    await db.commit()
+
+    # Reload with trades eagerly (run_advisor_backtest already does this, but be explicit)
+    from db.models import AdvisorBacktestRun  # noqa: PLC0415
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    result = await db.execute(
+        _select(AdvisorBacktestRun)
+        .options(selectinload(AdvisorBacktestRun.trades))
+        .where(AdvisorBacktestRun.id == backtest_run.id)
+    )
+    backtest_run = result.scalar_one()
+
+    # ── 6. Convert ORM objects to plain dicts for pure helper ──────────────────
+    backtest_run_fields: dict[str, Any] = {
+        "initial_cash": float(backtest_run.initial_cash),
+        "final_equity": float(backtest_run.final_equity)
+        if backtest_run.final_equity is not None
+        else None,
+        "total_return_pct": float(backtest_run.total_return_pct)
+        if backtest_run.total_return_pct is not None
+        else None,
+        "benchmark_symbol": backtest_run.benchmark_symbol,
+        "benchmark_return_pct": float(backtest_run.benchmark_return_pct)
+        if backtest_run.benchmark_return_pct is not None
+        else None,
+        "relative_return_pct": float(backtest_run.relative_return_pct)
+        if backtest_run.relative_return_pct is not None
+        else None,
+        "max_drawdown_pct": float(backtest_run.max_drawdown_pct)
+        if backtest_run.max_drawdown_pct is not None
+        else None,
+        "total_trades": backtest_run.total_trades,
+        "winning_trades": backtest_run.winning_trades,
+        "losing_trades": backtest_run.losing_trades,
+    }
+
+    backtest_trades_dicts: list[dict[str, Any]] = [
+        {
+            "symbol": t.symbol,
+            "action": t.action,
+            "trade_type": t.trade_type,
+            "reason": t.reason,
+            "quantity": float(t.quantity) if t.quantity is not None else None,
+            "price": float(t.price) if t.price is not None else None,
+            "cash_delta": float(t.cash_delta) if t.cash_delta is not None else None,
+            "raw_json": dict(t.raw_json or {}),
+        }
+        for t in backtest_run.trades
+    ]
+
+    # ── 7. Build combined evaluation ───────────────────────────────────────────
+    evaluation = build_evaluation(
+        replay_batch_id=replay_batch_id,
+        date_range={"start_date": start_date_str, "end_date": end_date_str},
+        symbols=symbols,
+        run_counts=run_counts,
+        timelines=timelines,
+        backtest_run_id=str(backtest_run.id),
+        backtest_run_fields=backtest_run_fields,
+        backtest_summary_json=dict(backtest_run.summary_json or {}),
+        backtest_trades=backtest_trades_dicts,
+    )
+
+    return api_response(evaluation, request)

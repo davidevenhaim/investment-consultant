@@ -180,9 +180,7 @@ async def test_sync_ibkr_for_account_disabled_returns_503(api_client: AsyncClien
     create_resp = await api_client.post("/api/v1/portfolio/broker-accounts", json=body)
     account_id = create_resp.json()["data"]["id"]
 
-    resp = await api_client.post(
-        f"/api/v1/portfolio/broker-accounts/{account_id}/sync-ibkr"
-    )
+    resp = await api_client.post(f"/api/v1/portfolio/broker-accounts/{account_id}/sync-ibkr")
     assert resp.status_code == 503
 
 
@@ -253,6 +251,7 @@ async def test_sync_ibkr_enabled_uses_isolated_runner_returns_inserted(
 
     monkeypatch.setenv("IBKR_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     fake_exec = IBKRExecution(
@@ -269,6 +268,7 @@ async def test_sync_ibkr_enabled_uses_isolated_runner_returns_inserted(
         return [fake_exec]
 
     import asyncio  # noqa: PLC0415
+
     monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
     resp = await api_client.post("/api/v1/portfolio/sync-ibkr")
@@ -290,6 +290,7 @@ async def test_sync_ibkr_connection_error_returns_503(
 
     monkeypatch.setenv("IBKR_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     import asyncio  # noqa: PLC0415

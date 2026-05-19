@@ -81,7 +81,9 @@ async def fake_memory_store():
 
 
 @pytest_asyncio.fixture
-async def api_client(db_session: AsyncSession, fake_memory_store, monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator:
+async def api_client(
+    db_session: AsyncSession, fake_memory_store, monkeypatch: pytest.MonkeyPatch
+) -> AsyncGenerator:
     from db.session import get_db
     from httpx import ASGITransport, AsyncClient
 
@@ -104,6 +106,7 @@ async def api_client(db_session: AsyncSession, fake_memory_store, monkeypatch: p
     # Enable news so fetch_news_for_symbol uses the patched _default_provider
     monkeypatch.setenv("NEWS_ENABLED", "true")
     from core.config import get_settings as _gs
+
     _gs.cache_clear()
 
     app.dependency_overrides[get_db] = override_get_db

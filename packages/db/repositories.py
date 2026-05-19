@@ -307,9 +307,7 @@ class ResearchRunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def has_recent_scheduled_run(
-        self, user_id: uuid.UUID, hours: int = 6
-    ) -> bool:
+    async def has_recent_scheduled_run(self, user_id: uuid.UUID, hours: int = 6) -> bool:
         """Return True if a SCHEDULED run for user_id with status QUEUED or RUNNING
         was created within the last `hours` hours. Used to prevent duplicate beat runs."""
         since = datetime.now(UTC) - timedelta(hours=hours)
@@ -708,9 +706,7 @@ class PortfolioPositionRepository:
         )
         return list(result.scalars().all())
 
-    async def get_by_symbol(
-        self, account_id: uuid.UUID, symbol: str
-    ) -> PortfolioPosition | None:
+    async def get_by_symbol(self, account_id: uuid.UUID, symbol: str) -> PortfolioPosition | None:
         result = await self._s.execute(
             select(PortfolioPosition).where(
                 PortfolioPosition.account_id == account_id,
@@ -797,9 +793,7 @@ class PortfolioPositionRepository:
         await self._s.flush()
         return True
 
-    async def update_weights(
-        self, account_id: uuid.UUID, total_equity: float
-    ) -> None:
+    async def update_weights(self, account_id: uuid.UUID, total_equity: float) -> None:
         """Recompute weight for each position given total_equity."""
         positions = await self.list_by_account(account_id)
         now = datetime.now(UTC)
@@ -864,9 +858,7 @@ class PortfolioSnapshotRepository:
         concentration = max_weight or 0.0
         cash_pct = cash_balance / total_equity if total_equity > 0 else 1.0
         largest = (
-            max(positions, key=lambda p: float(p.market_value or 0)).symbol
-            if positions
-            else None
+            max(positions, key=lambda p: float(p.market_value or 0)).symbol if positions else None
         )
         risk_metrics: dict[str, Any] = {
             "concentration_score": round(concentration, 4),
@@ -906,9 +898,7 @@ class IBKRExecutionRepository:
         result = await self._s.execute(q)
         return result.scalar_one_or_none() is not None
 
-    async def create(
-        self, ex: Any, broker_account_id: uuid.UUID | None = None
-    ) -> IBKRExecution:
+    async def create(self, ex: Any, broker_account_id: uuid.UUID | None = None) -> IBKRExecution:
         row = IBKRExecution(
             broker_account_id=broker_account_id,
             account_id_ibkr=ex.account_id_ibkr,
@@ -1070,9 +1060,7 @@ class BrokerAccountRepository:
         self._s = session
 
     async def get_by_id(self, account_id: uuid.UUID) -> BrokerAccount | None:
-        result = await self._s.execute(
-            select(BrokerAccount).where(BrokerAccount.id == account_id)
-        )
+        result = await self._s.execute(select(BrokerAccount).where(BrokerAccount.id == account_id))
         return result.scalar_one_or_none()
 
     async def get_by_id_for_user(
@@ -1086,18 +1074,14 @@ class BrokerAccountRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_active(
-        self, user_id: uuid.UUID | None = None
-    ) -> list[BrokerAccount]:
+    async def list_active(self, user_id: uuid.UUID | None = None) -> list[BrokerAccount]:
         q = select(BrokerAccount).where(BrokerAccount.is_active.is_(True))
         if user_id is not None:
             q = q.where(BrokerAccount.user_id == user_id)
         result = await self._s.execute(q)
         return list(result.scalars().all())
 
-    async def get_active_default(
-        self, user_id: uuid.UUID | None = None
-    ) -> BrokerAccount | None:
+    async def get_active_default(self, user_id: uuid.UUID | None = None) -> BrokerAccount | None:
         """Return first active account for this user (or global if user_id None)."""
         q = (
             select(BrokerAccount)
@@ -1174,17 +1158,20 @@ class BrokerAccountRepository:
         **fields: Any,
     ) -> BrokerAccount | None:
         allowed = {
-            "display_name", "connection_mode", "host", "port",
-            "client_id", "is_active", "metadata_json",
+            "display_name",
+            "connection_mode",
+            "host",
+            "port",
+            "client_id",
+            "is_active",
+            "metadata_json",
         }
         filtered = {k: v for k, v in fields.items() if k in allowed}
         if not filtered:
             return await self.get_by_id(account_id)
         filtered["updated_at"] = datetime.now(UTC)
         await self._s.execute(
-            update(BrokerAccount)
-            .where(BrokerAccount.id == account_id)
-            .values(**filtered)
+            update(BrokerAccount).where(BrokerAccount.id == account_id).values(**filtered)
         )
         await self._s.flush()
         return await self.get_by_id(account_id)

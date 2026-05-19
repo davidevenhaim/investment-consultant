@@ -62,7 +62,9 @@ async def test_chat_json_raises_connection_error_on_timeout() -> None:
 async def test_chat_json_raises_connection_error_on_http_status() -> None:
     resp = MagicMock()
     resp.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock(status_code=500))
+        side_effect=httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock(status_code=500)
+        )
     )
     with patch("httpx.AsyncClient") as mock_cls:
         mock_cls.return_value.__aenter__.return_value.post = AsyncMock(return_value=resp)
@@ -106,10 +108,12 @@ async def test_chat_json_sends_system_and_user_messages() -> None:
 
     with patch("httpx.AsyncClient") as mock_cls:
         mock_cls.return_value.__aenter__.return_value.post = fake_post
-        await _client().chat_json([
-            OllamaMessage(role="system", content="be brief"),
-            OllamaMessage(role="user", content="analyze"),
-        ])
+        await _client().chat_json(
+            [
+                OllamaMessage(role="system", content="be brief"),
+                OllamaMessage(role="user", content="analyze"),
+            ]
+        )
 
     assert len(captured) == 1
     msgs = captured[0]["messages"]

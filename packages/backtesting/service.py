@@ -27,19 +27,19 @@ logger = logging.getLogger(__name__)
 # ── Outcome classification thresholds (conservative, easy to tune) ─────────
 
 # A "significant" buy-side gain/loss relative to benchmark
-_BUY_WIN_MIN_FORWARD_RETURN = 0.03          # +3 % absolute or better
-_BUY_WIN_MIN_RELATIVE_RETURN = 0.0          # positive relative = WIN
-_BUY_LOSS_MAX_FORWARD_RETURN = -0.03        # worse than -3 % = LOSS candidate
-_BUY_LOSS_MAX_RELATIVE_RETURN = -0.05       # meaningfully underperforms benchmark
+_BUY_WIN_MIN_FORWARD_RETURN = 0.03  # +3 % absolute or better
+_BUY_WIN_MIN_RELATIVE_RETURN = 0.0  # positive relative = WIN
+_BUY_LOSS_MAX_FORWARD_RETURN = -0.03  # worse than -3 % = LOSS candidate
+_BUY_LOSS_MAX_RELATIVE_RETURN = -0.05  # meaningfully underperforms benchmark
 
 # HOLD: how much upside counts as "missed"
-_HOLD_MISSED_UPSIDE_MIN = 0.10              # +10 % forward return after HOLD = MISSED_UPSIDE
+_HOLD_MISSED_UPSIDE_MIN = 0.10  # +10 % forward return after HOLD = MISSED_UPSIDE
 
 # REDUCE / SELL / NO_ACTION: avoided-loss threshold
-_REDUCE_AVOIDED_LOSS_MAX_FORWARD = -0.05    # price fell >5 % = AVOIDED_LOSS
+_REDUCE_AVOIDED_LOSS_MAX_FORWARD = -0.05  # price fell >5 % = AVOIDED_LOSS
 
 # STOP_LOSS_LIKE drawdown threshold
-_STOP_LOSS_DRAWDOWN = -0.08                 # path drawdown worse than -8 %
+_STOP_LOSS_DRAWDOWN = -0.08  # path drawdown worse than -8 %
 
 # Minimum calendar-day fraction of horizon that must have price bars
 _MIN_BAR_FRACTION = 0.5
@@ -158,15 +158,9 @@ def _classify_label(
     rel = forward_return - (bench_return or 0.0)
 
     if action in _BUY_LIKE_ACTIONS:
-        if (
-            forward_return >= _BUY_WIN_MIN_FORWARD_RETURN
-            or rel >= _BUY_WIN_MIN_RELATIVE_RETURN
-        ):
+        if forward_return >= _BUY_WIN_MIN_FORWARD_RETURN or rel >= _BUY_WIN_MIN_RELATIVE_RETURN:
             return "WIN"
-        if (
-            forward_return <= _BUY_LOSS_MAX_FORWARD_RETURN
-            or rel <= _BUY_LOSS_MAX_RELATIVE_RETURN
-        ):
+        if forward_return <= _BUY_LOSS_MAX_FORWARD_RETURN or rel <= _BUY_LOSS_MAX_RELATIVE_RETURN:
             return "LOSS"
         return "NEUTRAL"
 
@@ -232,9 +226,8 @@ def build_learning_event_fields(
         event_type = "MISSED_UPSIDE_AFTER_HOLD"
         severity = "MEDIUM" if fwd < 0.20 else "HIGH"
         title = f"{symbol}: HOLD missed {fwd:.1%} upside"
-        summary = (
-            f"Held {symbol} but price rose {fwd:.1%} over horizon. "
-            + (f"Relative to benchmark: {rel:.1%}." if rel is not None else "")
+        summary = f"Held {symbol} but price rose {fwd:.1%} over horizon. " + (
+            f"Relative to benchmark: {rel:.1%}." if rel is not None else ""
         )
         causes = ["too_conservative", "missed_catalyst"]
 
@@ -242,9 +235,7 @@ def build_learning_event_fields(
         event_type = "MISSED_UPSIDE_AFTER_HOLD"
         severity = "MEDIUM"
         title = f"{symbol}: {action} missed {fwd:.1%} upside"
-        summary = (
-            f"Recommended {action} for {symbol} but price rose {fwd:.1%} over horizon."
-        )
+        summary = f"Recommended {action} for {symbol} but price rose {fwd:.1%} over horizon."
         causes = ["overly_defensive", "false_negative"]
 
     elif drawdown is not None and drawdown <= _STOP_LOSS_DRAWDOWN:

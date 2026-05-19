@@ -122,6 +122,7 @@ def main() -> None:
     try:
         if args.broker_account_id:
             import asyncio
+
             config = asyncio.run(_load_broker_account_config(args.broker_account_id))
         else:
             config = _build_config(args.host, args.port, args.client_id)

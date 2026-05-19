@@ -78,6 +78,7 @@ def test_score_breakdown_components_are_non_negative() -> None:
 
 def test_dev_default_user_id_matches_auth_module() -> None:
     from apps.api.dependencies.auth import DEV_DEFAULT_USER_ID as AUTH_DEFAULT
+
     assert DEV_DEFAULT_USER_ID == AUTH_DEFAULT
 
 
@@ -161,6 +162,7 @@ async def test_reset_does_not_affect_other_scenarios(db_session: AsyncSession) -
     # Verify bullish_rotation recs still exist via run_ids
     from db.models import NeutralRecommendation
     from sqlalchemy import select
+
     bullish_ids = [nr.id for nr in bullish]
     result = await db_session.execute(
         select(NeutralRecommendation).where(NeutralRecommendation.id.in_(bullish_ids))

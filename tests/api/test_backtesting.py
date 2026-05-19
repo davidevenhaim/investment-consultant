@@ -277,18 +277,20 @@ async def test_list_outcomes_symbol_filter(
 
     uid = DEV_DEFAULT_USER_ID
     for sym in ("AAPL", "NVDA"):
-        db_session.add(RecommendationOutcome(
-            user_id=uid,
-            recommendation_type="NEUTRAL",
-            recommendation_id=uuid.uuid4(),
-            symbol=sym,
-            action="HOLD",
-            measured_from=dt.datetime.now(dt.UTC),
-            measured_to=dt.datetime.now(dt.UTC),
-            horizon_days=30,
-            benchmark_symbol="SPY",
-            outcome_status="MEASURED",
-        ))
+        db_session.add(
+            RecommendationOutcome(
+                user_id=uid,
+                recommendation_type="NEUTRAL",
+                recommendation_id=uuid.uuid4(),
+                symbol=sym,
+                action="HOLD",
+                measured_from=dt.datetime.now(dt.UTC),
+                measured_to=dt.datetime.now(dt.UTC),
+                horizon_days=30,
+                benchmark_symbol="SPY",
+                outcome_status="MEASURED",
+            )
+        )
     await db_session.flush()
 
     resp = await api_client.get("/api/v1/backtesting/outcomes?symbol=AAPL")

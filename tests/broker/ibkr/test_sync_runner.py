@@ -84,10 +84,13 @@ def test_ibkr_connection_error_propagates_from_isolated_fetch() -> None:
     """IBKRConnectionError raised inside asyncio.run propagates to the caller."""
     config = _make_config()
 
-    with patch(
-        "broker.ibkr.sync_runner.asyncio.run",
-        side_effect=IBKRConnectionError("Connection refused (localhost:7497)"),
-    ), pytest.raises(IBKRConnectionError, match="Connection refused"):
+    with (
+        patch(
+            "broker.ibkr.sync_runner.asyncio.run",
+            side_effect=IBKRConnectionError("Connection refused (localhost:7497)"),
+        ),
+        pytest.raises(IBKRConnectionError, match="Connection refused"),
+    ):
         fetch_executions_isolated(config, months=12)
 
 
@@ -96,10 +99,13 @@ async def test_ibkr_connection_error_propagates_through_to_thread() -> None:
     """IBKRConnectionError propagates through asyncio.to_thread to the awaiting caller."""
     config = _make_config()
 
-    with patch(
-        "broker.ibkr.sync_runner.asyncio.run",
-        side_effect=IBKRConnectionError("Connection timed out"),
-    ), pytest.raises(IBKRConnectionError, match="timed out"):
+    with (
+        patch(
+            "broker.ibkr.sync_runner.asyncio.run",
+            side_effect=IBKRConnectionError("Connection timed out"),
+        ),
+        pytest.raises(IBKRConnectionError, match="timed out"),
+    ):
         await asyncio.to_thread(fetch_executions_isolated, config, 12)
 
 
@@ -147,6 +153,5 @@ def test_sync_runner_does_not_use_run_in_executor() -> None:
 
     source = inspect.getsource(runner_mod)
     assert "run_in_executor" not in source, (
-        "sync_runner must not use run_in_executor — "
-        "that passes work back to the calling loop"
+        "sync_runner must not use run_in_executor — that passes work back to the calling loop"
     )

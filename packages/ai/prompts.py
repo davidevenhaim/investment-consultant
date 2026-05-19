@@ -1,4 +1,5 @@
 """Prompt builder — formats research context into the LLM prompt template."""
+
 from typing import Any
 
 _MAX_MEMORY_CHARS = 500  # per memory entry
@@ -44,9 +45,11 @@ def build_context(state: dict[str, Any]) -> str:
         lines += [
             f"RSI-14: {_fmt_float(signals.get('rsi_14'), 1)}",
             f"Price vs SMA200: {_fmt_pct(signals.get('price_vs_sma_200', 1.0) - 1.0)}"
-            if signals.get("price_vs_sma_200") is not None else "Price vs SMA200: N/A",
+            if signals.get("price_vs_sma_200") is not None
+            else "Price vs SMA200: N/A",
             f"Price vs SMA50: {_fmt_pct(signals.get('price_vs_sma_50', 1.0) - 1.0)}"
-            if signals.get("price_vs_sma_50") is not None else "Price vs SMA50: N/A",
+            if signals.get("price_vs_sma_50") is not None
+            else "Price vs SMA50: N/A",
             f"3M return: {_fmt_pct(signals.get('return_3m'))}",
             f"6M return: {_fmt_pct(signals.get('return_6m'))}",
             f"3M vs SPY: {_fmt_pct(signals.get('relative_strength_3m_vs_spy'))}",

@@ -26,7 +26,9 @@ from backtesting.advisor_simulation import (
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _bars(symbol: str, start: dt.date, n: int, start_price: float = 100.0, dr: float = 0.0) -> dict[str, dict[dt.date, float]]:
+def _bars(
+    symbol: str, start: dt.date, n: int, start_price: float = 100.0, dr: float = 0.0
+) -> dict[str, dict[dt.date, float]]:
     """Build a minimal bars_by_symbol dict."""
     prices: dict[dt.date, float] = {}
     price = start_price
@@ -56,12 +58,19 @@ async def _seed_market_bars(
     for _ in range(n):
         while d.weekday() >= 5:
             d += dt.timedelta(days=1)
-        rows.append(MarketPrice(
-            symbol=symbol.upper(), price_date=d,
-            open=round(price, 4), high=round(price * 1.005, 4),
-            low=round(price * 0.995, 4), close=round(price, 4),
-            adjusted_close=round(price, 4), volume=1_000_000, provider="yfinance",
-        ))
+        rows.append(
+            MarketPrice(
+                symbol=symbol.upper(),
+                price_date=d,
+                open=round(price, 4),
+                high=round(price * 1.005, 4),
+                low=round(price * 0.995, 4),
+                close=round(price, 4),
+                adjusted_close=round(price, 4),
+                volume=1_000_000,
+                provider="yfinance",
+            )
+        )
         price *= 1 + dr
         d += dt.timedelta(days=1)
     db_session.add_all(rows)
@@ -154,7 +163,7 @@ def test_drawdown_tracked() -> None:
     assert abs(state.max_drawdown - (-0.1)) < 1e-6
     dd2 = state.update_drawdown(11_000.0)
     assert dd2 == 0.0
-    assert abs(state.max_drawdown - (-0.1)) < 1e-6   # max_drawdown unchanged
+    assert abs(state.max_drawdown - (-0.1)) < 1e-6  # max_drawdown unchanged
 
 
 def test_find_price_exact_date() -> None:
@@ -167,7 +176,7 @@ def test_find_price_exact_date() -> None:
 
 def test_find_price_forward_skip_weekend() -> None:
     # Put a price on a Wednesday, look up a Monday
-    mon = dt.date(2024, 1, 8)   # Monday
+    mon = dt.date(2024, 1, 8)  # Monday
     wed = dt.date(2024, 1, 10)  # Wednesday
     b: dict[str, dict[dt.date, float]] = {"AAPL": {wed: 105.0}}
     price, actual = _find_price(mon, b, "AAPL", forward_only=True, tolerance=5)
@@ -265,8 +274,11 @@ async def test_hold_creates_no_trade(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "HOLD", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     real_trades = [t for t in run.trades if t.trade_type != "SKIP"]
@@ -292,12 +304,17 @@ async def test_buy_at_target_weight_skips(db_session) -> None:
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     buys = [t for t in run.trades if t.trade_type == "BUY"]
-    skips = [t for t in run.trades if t.trade_type == "SKIP" and t.reason == "already_at_or_above_target"]
+    skips = [
+        t for t in run.trades if t.trade_type == "SKIP" and t.reason == "already_at_or_above_target"
+    ]
     assert len(buys) == 1
     assert len(skips) >= 1
 
@@ -318,8 +335,11 @@ async def test_reduce_sells_half_position(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "REDUCE", rec_date=d2)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     reduces = [t for t in run.trades if t.trade_type == "REDUCE"]
@@ -348,8 +368,11 @@ async def test_sell_closes_position(db_session) -> None:
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     sells = [t for t in run.trades if t.trade_type == "SELL"]
@@ -367,8 +390,11 @@ async def test_missing_price_creates_skip_no_crash(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "TSLA", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     # No price bars for TSLA → equity curve is empty → INSUFFICIENT_DATA is valid too
@@ -389,8 +415,11 @@ async def test_equity_curve_final_equity_reflects_positions(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     assert len(run.equity_points) > 0
@@ -412,8 +441,11 @@ async def test_max_drawdown_computed(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     assert run.max_drawdown_pct is not None
@@ -428,12 +460,18 @@ async def test_benchmark_return_computed_when_spy_exists(db_session) -> None:
     end = dt.date(2024, 4, 30)
 
     await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60)
-    await _seed_market_bars(db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001)
+    await _seed_market_bars(
+        db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001
+    )
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        benchmark_symbol="SPY",
     )
 
     assert run.benchmark_return_pct is not None
@@ -452,8 +490,12 @@ async def test_missing_benchmark_does_not_fail_run(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        benchmark_symbol="SPY",
     )
 
     assert run.status == "COMPLETED"
@@ -471,8 +513,11 @@ async def test_no_recommendations_creates_cash_only_run(db_session) -> None:
     await _seed_market_bars(db_session, "AAPL", start, n=30)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     assert run.status == "COMPLETED"
@@ -493,8 +538,11 @@ async def test_user_a_recs_not_used_for_user_b(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid_a, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run_b = await run_advisor_backtest(
-        session=db_session, user_id=uid_b,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid_b,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     # User B must have no real trades
@@ -513,9 +561,7 @@ async def test_equity_curve_no_lookahead_before_first_buy(db_session) -> None:
     await _seed_market_bars(
         db_session, "AAPL", start - dt.timedelta(days=5), n=80, start_price=100.0, dr=0.0
     )
-    await _seed_completed_run_with_rec(
-        db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_rec
-    )
+    await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_rec)
 
     run = await run_advisor_backtest(
         session=db_session,
@@ -617,8 +663,11 @@ async def test_no_lookahead_before_first_buy(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_date)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     buys = [t for t in run.trades if t.trade_type == "BUY"]
@@ -652,8 +701,11 @@ async def test_buy_affects_equity_from_trade_date_onward(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=buy_date)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     buys = [t for t in run.trades if t.trade_type == "BUY"]
@@ -682,8 +734,11 @@ async def test_reduce_or_sell_affects_only_from_trade_date(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "SELL", rec_date=d_sell)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     sells = [t for t in run.trades if t.trade_type == "SELL"]
@@ -725,8 +780,11 @@ async def test_final_equity_equals_last_equity_point(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     assert run.equity_points
@@ -748,8 +806,11 @@ async def test_total_return_uses_last_equity(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=initial_cash,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=initial_cash,
     )
 
     last_ep = max(run.equity_points, key=lambda e: e.date)
@@ -780,12 +841,19 @@ async def test_max_drawdown_from_chronological_curve(db_session) -> None:
     while bar_idx < 50:
         while d.weekday() >= 5:
             d += dt.timedelta(days=1)
-        rows.append(MarketPrice(
-            symbol="AAPL", price_date=d,
-            open=round(price, 6), high=round(price * 1.002, 6),
-            low=round(price * 0.998, 6), close=round(price, 6),
-            adjusted_close=round(price, 6), volume=1_000_000, provider="yfinance",
-        ))
+        rows.append(
+            MarketPrice(
+                symbol="AAPL",
+                price_date=d,
+                open=round(price, 6),
+                high=round(price * 1.002, 6),
+                low=round(price * 0.998, 6),
+                close=round(price, 6),
+                adjusted_close=round(price, 6),
+                volume=1_000_000,
+                provider="yfinance",
+            )
+        )
         # Buffer bars (first 5): flat. Then 20 bars up, then 20 down.
         if bar_idx < 5:
             pass  # flat
@@ -802,8 +870,11 @@ async def test_max_drawdown_from_chronological_curve(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=initial_cash,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=initial_cash,
     )
 
     assert run.max_drawdown_pct is not None
@@ -843,13 +914,22 @@ async def test_summary_json_fields(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     s = run.summary_json
-    for key in ("initial_cash", "final_equity", "profit_loss_amount",
-                "total_return_pct", "human_summary", "skipped_recommendations"):
+    for key in (
+        "initial_cash",
+        "final_equity",
+        "profit_loss_amount",
+        "total_return_pct",
+        "human_summary",
+        "skipped_recommendations",
+    ):
         assert key in s, f"Missing key: {key}"
     assert "$10,000.00" in s["human_summary"]
 
@@ -872,8 +952,11 @@ async def test_summary_json_includes_trade_and_skip_breakdown(db_session) -> Non
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     s = run.summary_json
@@ -900,8 +983,11 @@ async def test_summary_json_final_cash_and_positions_match_last_equity_point(db_
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     last_ep = max(run.equity_points, key=lambda e: e.date)
@@ -924,8 +1010,11 @@ async def test_summary_json_open_positions_after_buy_and_reduce(db_session) -> N
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "REDUCE", rec_date=d_reduce)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=d_buy, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=d_buy,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     s = run.summary_json
@@ -959,8 +1048,11 @@ async def test_summary_json_closed_positions_after_sell(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "SELL", rec_date=d_sell)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     s = run.summary_json
@@ -1004,8 +1096,11 @@ async def test_summary_json_best_and_worst_realized_trade(db_session) -> None:
     await _seed_completed_run_with_rec(db_session, uid, "NVDA", "SELL", rec_date=d_sell2)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
     )
 
     s = run.summary_json
@@ -1027,12 +1122,18 @@ async def test_summary_json_benchmark_summary_with_spy(db_session) -> None:
     end = dt.date(2024, 4, 30)
 
     await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.003)
-    await _seed_market_bars(db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001)
+    await _seed_market_bars(
+        db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001
+    )
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        benchmark_symbol="SPY",
     )
 
     s = run.summary_json
@@ -1055,8 +1156,12 @@ async def test_summary_json_benchmark_summary_no_spy_graceful(db_session) -> Non
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        benchmark_symbol="SPY",
     )
 
     s = run.summary_json
@@ -1076,12 +1181,18 @@ async def test_summary_json_display_strings_format(db_session) -> None:
     end = dt.date(2024, 4, 30)
 
     await _seed_market_bars(db_session, "AAPL", start - dt.timedelta(days=5), n=60, dr=0.005)
-    await _seed_market_bars(db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001)
+    await _seed_market_bars(
+        db_session, "SPY", start - dt.timedelta(days=5), n=60, start_price=400.0, dr=0.001
+    )
     await _seed_completed_run_with_rec(db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start)
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0, benchmark_symbol="SPY",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        benchmark_symbol="SPY",
     )
 
     s = run.summary_json
@@ -1134,13 +1245,20 @@ async def test_source_all_includes_both_scenario_and_real(db_session) -> None:
         db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
     )
     await _seed_completed_run_with_rec(
-        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        db_session,
+        uid,
+        "NVDA",
+        "BUY_CANDIDATE",
+        rec_date=start + dt.timedelta(days=2),
         metadata=_REAL_META,
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
         recommendation_source="ALL",
     )
 
@@ -1166,13 +1284,20 @@ async def test_source_scenario_includes_only_scenario_rows(db_session) -> None:
         db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
     )
     await _seed_completed_run_with_rec(
-        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        db_session,
+        uid,
+        "NVDA",
+        "BUY_CANDIDATE",
+        rec_date=start + dt.timedelta(days=2),
         metadata=_REAL_META,
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
         recommendation_source="SCENARIO",
     )
 
@@ -1204,18 +1329,30 @@ async def test_source_scenario_with_scenario_name_filters_by_name(db_session) ->
         db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=meta_alpha
     )
     await _seed_completed_run_with_rec(
-        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        db_session,
+        uid,
+        "NVDA",
+        "BUY_CANDIDATE",
+        rec_date=start + dt.timedelta(days=2),
         metadata=meta_beta,
     )
     await _seed_completed_run_with_rec(
-        db_session, uid, "AMD", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=4),
+        db_session,
+        uid,
+        "AMD",
+        "BUY_CANDIDATE",
+        rec_date=start + dt.timedelta(days=4),
         metadata=meta_alpha,
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
-        recommendation_source="SCENARIO", scenario_name="alpha",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        recommendation_source="SCENARIO",
+        scenario_name="alpha",
     )
 
     buys = [t for t in run.trades if t.trade_type == "BUY"]
@@ -1241,13 +1378,20 @@ async def test_source_real_excludes_scenario_rows(db_session) -> None:
         db_session, uid, "AAPL", "BUY_CANDIDATE", rec_date=start, metadata=_SCENARIO_META
     )
     await _seed_completed_run_with_rec(
-        db_session, uid, "NVDA", "BUY_CANDIDATE", rec_date=start + dt.timedelta(days=2),
+        db_session,
+        uid,
+        "NVDA",
+        "BUY_CANDIDATE",
+        rec_date=start + dt.timedelta(days=2),
         metadata=_REAL_META,
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
         recommendation_source="REAL",
     )
 
@@ -1273,8 +1417,11 @@ async def test_source_scenario_no_matching_rows_graceful(db_session) -> None:
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
         recommendation_source="SCENARIO",
     )
 
@@ -1297,9 +1444,13 @@ async def test_assumptions_json_stores_recommendation_source(db_session) -> None
     )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
-        recommendation_source="SCENARIO", scenario_name="test_scenario",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        recommendation_source="SCENARIO",
+        scenario_name="test_scenario",
     )
 
     a = run.assumptions_json
@@ -1319,15 +1470,22 @@ async def test_summary_json_stores_source_and_recommendations_considered(db_sess
 
     for sym, meta in [("AAPL", _SCENARIO_META), ("NVDA", _REAL_META)]:
         await _seed_completed_run_with_rec(
-            db_session, uid, sym, "BUY_CANDIDATE",
+            db_session,
+            uid,
+            sym,
+            "BUY_CANDIDATE",
             rec_date=start + dt.timedelta(days=1 if sym == "NVDA" else 0),
             metadata=meta,
         )
 
     run = await run_advisor_backtest(
-        session=db_session, user_id=uid,
-        start_date=start, end_date=end, initial_cash=10_000.0,
-        recommendation_source="SCENARIO", scenario_name="test_scenario",
+        session=db_session,
+        user_id=uid,
+        start_date=start,
+        end_date=end,
+        initial_cash=10_000.0,
+        recommendation_source="SCENARIO",
+        scenario_name="test_scenario",
     )
 
     s = run.summary_json
@@ -1371,7 +1529,10 @@ async def test_initial_positions_reduce_creates_reduce_trade(db_session) -> None
     await _seed_market_bars(db_session, "AAPL", start, n=40, start_price=100.0)
 
     run, _ = await _seed_completed_run_with_rec(
-        db_session, uid, "AAPL", "REDUCE",
+        db_session,
+        uid,
+        "AAPL",
+        "REDUCE",
         rec_date=dt.date(2026, 1, 12),
     )
 
@@ -1385,8 +1546,7 @@ async def test_initial_positions_reduce_creates_reduce_trade(db_session) -> None
     )
     reduce_trades = [t for t in result.trades if t.trade_type == "REDUCE"]
     skip_no_pos = [
-        t for t in result.trades
-        if t.trade_type == "SKIP" and t.reason == "no_position_to_reduce"
+        t for t in result.trades if t.trade_type == "SKIP" and t.reason == "no_position_to_reduce"
     ]
     assert len(reduce_trades) >= 1
     assert len(skip_no_pos) == 0

@@ -72,9 +72,7 @@ class IBKRClient:
         cfg = get_settings()
 
         mode: ConnectionMode = (
-            "HOSTED_GATEWAY"
-            if str(account.connection_mode) == "HOSTED_GATEWAY"
-            else "LOCAL_TWS"
+            "HOSTED_GATEWAY" if str(account.connection_mode) == "HOSTED_GATEWAY" else "LOCAL_TWS"
         )
 
         if mode == "HOSTED_GATEWAY":
@@ -153,8 +151,7 @@ class IBKRClient:
                 extra={"reason": "timeout", "timeout_seconds": cfg.timeout_seconds},
             )
             raise IBKRConnectionError(
-                f"IBKR connection timed out after {cfg.timeout_seconds}s "
-                f"({cfg.host}:{cfg.port})"
+                f"IBKR connection timed out after {cfg.timeout_seconds}s ({cfg.host}:{cfg.port})"
             ) from exc
         except (IBKRConnectionError, IBKRReadOnlyError):
             raise

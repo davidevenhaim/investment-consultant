@@ -105,9 +105,7 @@ class MarketPriceRepository:
         )
         return result.scalar()
 
-    async def get_latest_close(
-        self, symbol: str, provider: str = "yfinance"
-    ) -> float | None:
+    async def get_latest_close(self, symbol: str, provider: str = "yfinance") -> float | None:
         """Return most recent closing price for symbol."""
         result = await self._s.execute(
             select(MarketPrice.close)

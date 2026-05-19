@@ -1,4 +1,5 @@
 """Tests for LLM analysis service — parse, validate, fallback."""
+
 import json
 
 import pytest
@@ -81,7 +82,9 @@ async def test_missing_required_section_returns_fallback() -> None:
 
     class MissingKeyClient(LLMClient):
         async def complete(self, prompt: str, max_tokens: int = 2000) -> str:
-            return json.dumps({"thesis": {"symbol": "AAPL"}})  # missing risk, missing_details, critic
+            return json.dumps(
+                {"thesis": {"symbol": "AAPL"}}
+            )  # missing risk, missing_details, critic
 
     analysis, warnings = await run_llm_analysis("AAPL", "p", MissingKeyClient(), "m")
     assert analysis.llm_enabled is False

@@ -243,9 +243,9 @@ def test_parse_multiple_trades_sorted() -> None:
     execs = parse_flex_xml(_MULTI_TRADE)
     assert len(execs) == 3
     # Sorted ascending by executed_at
-    assert execs[0].symbol == "AAPL"   # Jan 10
-    assert execs[1].symbol == "TSLA"   # Mar 5
-    assert execs[2].symbol == "NVDA"   # Mar 15
+    assert execs[0].symbol == "AAPL"  # Jan 10
+    assert execs[1].symbol == "TSLA"  # Mar 5
+    assert execs[2].symbol == "NVDA"  # Mar 15
 
 
 def test_parse_error_xml_raises() -> None:

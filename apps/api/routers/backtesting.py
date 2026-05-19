@@ -233,9 +233,7 @@ async def get_advisor_backtest(
     if run is None:
         raise HTTPException(status_code=404, detail="Advisor backtest run not found.")
 
-    return api_response(
-        AdvisorBacktestRunDetailResponse.model_validate(run).model_dump(), request
-    )
+    return api_response(AdvisorBacktestRunDetailResponse.model_validate(run).model_dump(), request)
 
 
 # ── Advisor backtest analysis (M11.3 — local Ollama) ─────────────────────────

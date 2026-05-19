@@ -139,7 +139,6 @@ class ChromaMemoryStore(MemoryStore):
                 {"collection": collection, "symbol": filters.get("symbol")},
             ) from exc
 
-
     async def reset_collections(self, collections: tuple[str, ...] | None = None) -> None:
         """
         Delete and recreate collections. Used by dev reset CLI and integration test teardown.
@@ -165,9 +164,7 @@ class ChromaMemoryStore(MemoryStore):
             col = await client.get_or_create_collection(collection)
             await col.delete(ids=ids)
         except Exception as exc:
-            logger.warning(
-                "chroma_delete_documents_failed", collection=collection, error=str(exc)
-            )
+            logger.warning("chroma_delete_documents_failed", collection=collection, error=str(exc))
 
 
 def make_chroma_store() -> ChromaMemoryStore:

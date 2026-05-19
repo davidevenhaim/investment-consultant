@@ -1,4 +1,5 @@
 """FakeClaudeClient — deterministic LLM client for tests. No network calls."""
+
 import json
 
 from core.errors import LLMError
@@ -23,9 +24,7 @@ _FAKE_RESPONSE: dict[str, object] = {
             "Forward valuation multiples price in continued high growth.",
             "Slowing unit volume growth in key product categories.",
         ],
-        "what_changed_since_last_run": [
-            "No significant change detected from prior analysis."
-        ],
+        "what_changed_since_last_run": ["No significant change detected from prior analysis."],
         "previous_thesis_alignment": "UNCHANGED",
         "confidence": 0.78,
     },

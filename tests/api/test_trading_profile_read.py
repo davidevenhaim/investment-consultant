@@ -59,7 +59,9 @@ class TestTradingProfileSnapshotRepoOrdering:
 # ── API endpoint tests (unit, mock service layer) ─────────────────────────────
 
 
-def _make_snapshot_response(total_executions: int, broker_account_id: uuid.UUID | None = None) -> MagicMock:
+def _make_snapshot_response(
+    total_executions: int, broker_account_id: uuid.UUID | None = None
+) -> MagicMock:
     snap = MagicMock()
     snap.id = uuid.uuid4()
     snap.broker_account_id = broker_account_id
@@ -101,9 +103,7 @@ async def test_get_trading_profile_prefers_broker_scoped(api_client: Any) -> Non
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=broker_account_mock)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=broker_account_mock)),
         ),
         patch(
             "apps.api.routers.portfolio.TradingProfileSnapshotRepository",
@@ -134,9 +134,7 @@ async def test_get_trading_profile_does_not_fall_back_to_global(api_client: Any)
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=broker_account_mock)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=broker_account_mock)),
         ),
         patch(
             "apps.api.routers.portfolio.TradingProfileSnapshotRepository",
@@ -156,9 +154,7 @@ async def test_get_trading_profile_no_broker_account_returns_404(api_client: Any
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=None)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=None)),
         ),
         patch(
             "apps.api.routers.portfolio.TradingProfileSnapshotRepository",
@@ -175,9 +171,7 @@ async def test_get_trading_profile_404_when_no_snapshots(api_client: Any) -> Non
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=None)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=None)),
         ),
         patch(
             "apps.api.routers.portfolio.TradingProfileSnapshotRepository",
@@ -205,9 +199,7 @@ async def test_symbol_stats_passes_broker_account_id(api_client: Any) -> None:
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=broker_account_mock)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=broker_account_mock)),
         ),
         patch(
             "portfolio.trade_history_service.get_symbol_trading_stats",
@@ -236,9 +228,7 @@ async def test_trades_passes_broker_account_id(api_client: Any) -> None:
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=broker_account_mock)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=broker_account_mock)),
         ),
         patch(
             "portfolio.trade_history_service.load_all_executions",
@@ -261,9 +251,7 @@ async def test_trades_no_broker_account_returns_empty_without_global_read(
     with (
         patch(
             "apps.api.routers.portfolio.BrokerAccountRepository",
-            return_value=MagicMock(
-                get_active_default=AsyncMock(return_value=None)
-            ),
+            return_value=MagicMock(get_active_default=AsyncMock(return_value=None)),
         ),
         patch(
             "portfolio.trade_history_service.load_all_executions",

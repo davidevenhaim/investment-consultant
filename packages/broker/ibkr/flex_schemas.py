@@ -14,7 +14,7 @@ class FlexExecution(BaseModel):
     Maps directly to IBKRExecution for persistence.
     """
 
-    exec_id: str                    # deterministic dedupe key (tradeID or derived)
+    exec_id: str  # deterministic dedupe key (tradeID or derived)
     account_id_ibkr: str
     symbol: str
     exchange: str | None = None

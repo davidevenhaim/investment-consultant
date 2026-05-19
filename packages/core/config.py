@@ -41,8 +41,8 @@ class Settings(BaseSettings):
 
     # IBKR Flex Query (historical trade import — separate from reqExecutions)
     ibkr_flex_enabled: bool = False
-    ibkr_flex_token: str = ""        # never log; treat as secret
-    ibkr_flex_query_id: str = ""     # the numeric Flex Query ID from IBKR Account Mgmt
+    ibkr_flex_token: str = ""  # never log; treat as secret
+    ibkr_flex_query_id: str = ""  # the numeric Flex Query ID from IBKR Account Mgmt
     # Root URL — client appends /SendRequest and /GetStatement automatically.
     # Example: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
     ibkr_flex_base_url: str = (

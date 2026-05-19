@@ -169,9 +169,7 @@ async def get_portfolio_context_for_symbol(
             market_value=mv_for_pos,
             cost_basis=float(pos.cost_basis) if pos.cost_basis else None,
             unrealized_pnl=float(pos.unrealized_pnl) if pos.unrealized_pnl else None,
-            unrealized_pnl_pct=(
-                float(pos.unrealized_pnl_pct) if pos.unrealized_pnl_pct else None
-            ),
+            unrealized_pnl_pct=(float(pos.unrealized_pnl_pct) if pos.unrealized_pnl_pct else None),
             weight=pos_weight,
         )
 

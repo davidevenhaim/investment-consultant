@@ -13,7 +13,9 @@ from portfolio.trade_history_service import sync_ibkr_executions
 from sqlalchemy.exc import IntegrityError
 
 
-def _make_exec(exec_id: str, symbol: str, side: str, qty: float, price: float, days_ago: int) -> IBKRExecution:
+def _make_exec(
+    exec_id: str, symbol: str, side: str, qty: float, price: float, days_ago: int
+) -> IBKRExecution:
     ts = dt.datetime(2025, 1, 1, tzinfo=dt.UTC) + dt.timedelta(days=days_ago)
     return IBKRExecution(
         exec_id=exec_id,
@@ -97,9 +99,7 @@ class TestSyncIBKRExecutions:
         assert call_kwargs.get("broker_account_id") == ba_id
 
     @pytest.mark.asyncio
-    async def test_dedupe_scoped_by_broker_account(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_dedupe_scoped_by_broker_account(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Same exec_id is NOT a dup if broker_account_id differs — check is scoped."""
         session = AsyncMock()
         ba_id = uuid.UUID("00000000-0000-0000-0000-000000000002")

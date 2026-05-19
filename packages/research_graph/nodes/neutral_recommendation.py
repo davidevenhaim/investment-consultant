@@ -368,6 +368,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
         news_score = float(news_score_result.score)
     else:
         from news.scoring import _NO_DATA_SCORE
+
         news_score = float(stub_scores.get("news", _NO_DATA_SCORE))
 
     try:

@@ -433,9 +433,11 @@ async def _seed_replay_batch(
         db_session.add(run)  # type: ignore[attr-defined]
         await db_session.flush()  # type: ignore[attr-defined]
         for sym in syms:
-            db_session.add(ResearchRunTicker(  # type: ignore[attr-defined]
-                research_run_id=run.id, symbol=sym, status="CREATED"
-            ))
+            db_session.add(
+                ResearchRunTicker(  # type: ignore[attr-defined]
+                    research_run_id=run.id, symbol=sym, status="CREATED"
+                )
+            )
         await db_session.flush()  # type: ignore[attr-defined]
 
 
@@ -540,9 +542,7 @@ async def test_replay_batch_status_unknown_batch_returns_404(api_client) -> None
 
 
 @pytest.mark.asyncio
-async def test_replay_batch_status_user_isolation(
-    api_client, db_session, monkeypatch
-) -> None:
+async def test_replay_batch_status_user_isolation(api_client, db_session, monkeypatch) -> None:
     """User B cannot see User A's replay batch."""
     batch_id = str(uuid.uuid4())
     other_user = uuid.uuid4()
@@ -651,10 +651,12 @@ async def test_replay_batch_started_finished_aggregate(api_client, db_session) -
     t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
     t_late = datetime(2026, 1, 1, 17, 0, 0, tzinfo=UTC)
 
-    for _i, (aod, sta, fna) in enumerate([
-        ("2026-01-01", t_early, t_late),
-        ("2026-01-08", t_late, None),
-    ]):
+    for _i, (aod, sta, fna) in enumerate(
+        [
+            ("2026-01-01", t_early, t_late),
+            ("2026-01-08", t_late, None),
+        ]
+    ):
         run = ResearchRun(
             id=uuid.uuid4(),
             user_id=DEV_DEFAULT_USER_ID,
@@ -716,9 +718,7 @@ async def test_replay_batch_backtest_unknown_batch_returns_404(api_client) -> No
 
 
 @pytest.mark.asyncio
-async def test_replay_batch_backtest_no_completed_runs_returns_422(
-    api_client, db_session
-) -> None:
+async def test_replay_batch_backtest_no_completed_runs_returns_422(api_client, db_session) -> None:
     """Batch with no COMPLETED runs → 422."""
     batch_id = str(uuid.uuid4())
     await _seed_replay_batch(
@@ -741,9 +741,7 @@ async def test_replay_batch_backtest_no_completed_runs_returns_422(
 
 
 @pytest.mark.asyncio
-async def test_replay_batch_backtest_creates_advisor_backtest(
-    api_client, db_session
-) -> None:
+async def test_replay_batch_backtest_creates_advisor_backtest(api_client, db_session) -> None:
     """Completed batch → 201 with AdvisorBacktestRunDetailResponse shape."""
     batch_id = str(uuid.uuid4())
     await _seed_replay_batch(
@@ -773,9 +771,7 @@ async def test_replay_batch_backtest_creates_advisor_backtest(
 
 
 @pytest.mark.asyncio
-async def test_replay_batch_backtest_only_completed_runs_used(
-    api_client, db_session
-) -> None:
+async def test_replay_batch_backtest_only_completed_runs_used(api_client, db_session) -> None:
     """Batch with mixed statuses: only COMPLETED runs are fed into the backtest."""
     batch_id = str(uuid.uuid4())
     # 2 completed, 1 queued — should succeed (not 422)
@@ -785,7 +781,7 @@ async def test_replay_batch_backtest_only_completed_runs_used(
         replay_batch_id=batch_id,
         dates_and_statuses=[
             ("2026-01-01", "COMPLETED"),
-            ("2026-01-08", "QUEUED"),   # not yet done
+            ("2026-01-08", "QUEUED"),  # not yet done
             ("2026-01-15", "COMPLETED"),
         ],
     )
@@ -845,16 +841,16 @@ async def test_replay_batch_backtest_traceability(api_client, db_session) -> Non
     assert assumptions.get("source") == "replay_batch_backtest"
 
     summary = data.get("summary_json", {})
-    assert summary.get("replay_batch_id") == batch_id or assumptions.get("replay_batch_id") == batch_id
+    assert (
+        summary.get("replay_batch_id") == batch_id or assumptions.get("replay_batch_id") == batch_id
+    )
 
 
 # ── elapsed_seconds guard tests ────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_elapsed_seconds_null_when_finished_at_backdated(
-    api_client, db_session
-) -> None:
+async def test_elapsed_seconds_null_when_finished_at_backdated(api_client, db_session) -> None:
     """Replay runs with backdated finished_at must return elapsed_seconds=null."""
     from db.models import ResearchRun, ResearchRunTicker
 
@@ -893,9 +889,7 @@ async def test_elapsed_seconds_null_when_finished_at_backdated(
 
 
 @pytest.mark.asyncio
-async def test_elapsed_seconds_positive_for_running_batch(
-    api_client, db_session
-) -> None:
+async def test_elapsed_seconds_positive_for_running_batch(api_client, db_session) -> None:
     """In-progress batch (no finished_at) returns positive elapsed_seconds."""
     from db.models import ResearchRun, ResearchRunTicker
 
@@ -931,9 +925,7 @@ async def test_elapsed_seconds_positive_for_running_batch(
 
 
 @pytest.mark.asyncio
-async def test_elapsed_seconds_positive_when_not_backdated(
-    api_client, db_session
-) -> None:
+async def test_elapsed_seconds_positive_when_not_backdated(api_client, db_session) -> None:
     """Normal completed batch (started_at < finished_at) still returns positive elapsed."""
     from db.models import ResearchRun, ResearchRunTicker
 
@@ -1037,17 +1029,19 @@ async def _seed_market_price_rows(
     for _ in range(n):
         while d.weekday() >= 5:
             d += timedelta(days=1)
-        rows.append(MarketPrice(
-            symbol=symbol.upper(),
-            price_date=d,
-            open=price,
-            high=price,
-            low=price,
-            close=price,
-            adjusted_close=price,
-            volume=1_000_000,
-            provider="yfinance",
-        ))
+        rows.append(
+            MarketPrice(
+                symbol=symbol.upper(),
+                price_date=d,
+                open=price,
+                high=price,
+                low=price,
+                close=price,
+                adjusted_close=price,
+                volume=1_000_000,
+                provider="yfinance",
+            )
+        )
         d += timedelta(days=1)
     db_session.add_all(rows)
     await db_session.flush()
@@ -1074,9 +1068,7 @@ async def test_initial_positions_backwards_compatible(api_client, db_session) ->
 
 
 @pytest.mark.asyncio
-async def test_initial_positions_reduce_executes_not_skipped(
-    api_client, db_session
-) -> None:
+async def test_initial_positions_reduce_executes_not_skipped(api_client, db_session) -> None:
     """REDUCE recommendation with a seeded position creates a REDUCE trade, not a SKIP."""
     batch_id = str(uuid.uuid4())
     await _seed_replay_run_with_neutral_rec(
@@ -1100,7 +1092,8 @@ async def test_initial_positions_reduce_executes_not_skipped(
     trades = resp.json()["data"]["trades"]
     reduce_trades = [t for t in trades if t["trade_type"] == "REDUCE"]
     skip_no_pos = [
-        t for t in trades
+        t
+        for t in trades
         if t["trade_type"] == "SKIP" and t.get("reason") == "no_position_to_reduce"
     ]
     assert len(reduce_trades) >= 1, "Expected at least one REDUCE trade"
@@ -1139,9 +1132,7 @@ async def test_initial_positions_in_assumptions_json(api_client, db_session) -> 
 
 
 @pytest.mark.asyncio
-async def test_initial_positions_closed_position_in_summary(
-    api_client, db_session
-) -> None:
+async def test_initial_positions_closed_position_in_summary(api_client, db_session) -> None:
     """After a REDUCE on a seeded position, closed_positions appears in summary_json."""
     batch_id = str(uuid.uuid4())
     await _seed_replay_run_with_neutral_rec(
@@ -1169,9 +1160,7 @@ async def test_initial_positions_closed_position_in_summary(
 
 
 @pytest.mark.asyncio
-async def test_initial_positions_cost_exceeds_cash_returns_422(
-    api_client, db_session
-) -> None:
+async def test_initial_positions_cost_exceeds_cash_returns_422(api_client, db_session) -> None:
     """Total initial position cost > initial_cash → 422."""
     batch_id = str(uuid.uuid4())
     await _seed_replay_run_with_neutral_rec(
@@ -1196,9 +1185,7 @@ async def test_initial_positions_cost_exceeds_cash_returns_422(
 
 
 @pytest.mark.asyncio
-async def test_initial_positions_unpriceable_symbol_returns_422(
-    api_client, db_session
-) -> None:
+async def test_initial_positions_unpriceable_symbol_returns_422(api_client, db_session) -> None:
     """Symbol with no market price bars → 422 (not 500)."""
     batch_id = str(uuid.uuid4())
     await _seed_replay_run_with_neutral_rec(

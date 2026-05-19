@@ -21,6 +21,7 @@ def _default_provider() -> NewsProvider:
     name = settings.news_provider.lower()
     if name == "newsapi":
         from news.provider_newsapi import NewsAPIProvider
+
         return NewsAPIProvider(
             api_key=settings.newsapi_key,
             timeout_seconds=settings.news_timeout_seconds,
@@ -50,6 +51,7 @@ async def fetch_news_for_symbol(
     if not settings.news_enabled and provider is None and as_of_date is None:
         logger.info("news_disabled", symbol=symbol)
         from news.scoring import _NO_DATA_SCORE
+
         return [], NewsScoreResult(
             score=_NO_DATA_SCORE,
             no_data=True,
@@ -114,6 +116,7 @@ async def fetch_news_for_symbol(
     except Exception as exc:
         logger.warning("news_fetch_failed", symbol=symbol, error=str(exc))
         from news.scoring import _NO_DATA_SCORE
+
         return [], NewsScoreResult(
             score=_NO_DATA_SCORE,
             no_data=True,

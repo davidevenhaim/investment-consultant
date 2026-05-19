@@ -94,6 +94,7 @@ async def fetch_executions(client: IBKRClient, months: int = 12) -> list[IBKRExe
     raw_times: list[str] = []
     for fill in fills:
         import contextlib  # noqa: PLC0415
+
         with contextlib.suppress(Exception):
             exec_obj = fill.execution if hasattr(fill, "execution") else fill
             raw_times.append(str(exec_obj.time))
@@ -189,6 +190,7 @@ async def fetch_session_diagnostics(client: IBKRClient) -> dict[str, Any]:
         for fill in fills:
             exec_obj = fill.execution if hasattr(fill, "execution") else fill
             import contextlib as _cl  # noqa: PLC0415
+
             with _cl.suppress(Exception):
                 ex = map_execution(exec_obj, account_id)
                 mapped_execution_count += 1

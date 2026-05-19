@@ -34,7 +34,8 @@ def map_execution(exec_obj: Any, account_id: str) -> IBKRExecution:
     # ib_insync Execution fields
     exec_id: str = str(exec_obj.execId)
     symbol: str = (
-        str(exec_obj.contract.symbol) if hasattr(exec_obj, "contract")
+        str(exec_obj.contract.symbol)
+        if hasattr(exec_obj, "contract")
         else str(raw.get("symbol", ""))
     )
     exchange: str | None = (
@@ -57,9 +58,7 @@ def map_execution(exec_obj: Any, account_id: str) -> IBKRExecution:
         executed_at = dt.datetime.fromisoformat(time_str).replace(tzinfo=dt.UTC)
 
     order_ref: str | None = (
-        str(exec_obj.orderRef)
-        if hasattr(exec_obj, "orderRef") and exec_obj.orderRef
-        else None
+        str(exec_obj.orderRef) if hasattr(exec_obj, "orderRef") and exec_obj.orderRef else None
     )
     currency: str = (
         str(exec_obj.currency) if hasattr(exec_obj, "currency") and exec_obj.currency else "USD"

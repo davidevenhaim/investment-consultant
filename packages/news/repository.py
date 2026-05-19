@@ -53,9 +53,7 @@ class NewsItemRepository:
         stmt = (
             pg_insert(NewsItem)
             .values(rows)
-            .on_conflict_do_nothing(
-                constraint="uq_news_symbol_provider_article"
-            )
+            .on_conflict_do_nothing(constraint="uq_news_symbol_provider_article")
             .returning(NewsItem)
         )
         result = await self._session.execute(stmt)

@@ -363,9 +363,7 @@ async def test_sync_with_executions_persists_all(
 
     from portfolio.trade_history_service import sync_ibkr_executions
 
-    inserted = await sync_ibkr_executions(
-        session, _FAKE_EXECUTIONS, broker_account_id=ba_id
-    )
+    inserted = await sync_ibkr_executions(session, _FAKE_EXECUTIONS, broker_account_id=ba_id)
     assert inserted == len(_FAKE_EXECUTIONS)
     assert ibkr_repo_mock.create.call_count == len(_FAKE_EXECUTIONS)
     ba_repo_mock.mark_sync_success.assert_called_once_with(ba_id)

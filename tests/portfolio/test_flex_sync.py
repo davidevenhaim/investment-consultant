@@ -197,9 +197,7 @@ async def test_flex_sync_marks_failure_on_flex_error(
     monkeypatch.setattr(svc, "IBKRExecutionRepository", lambda s: _make_ibkr_repo_mock())
 
     flex_mock = AsyncMock()
-    flex_mock.fetch_statement = AsyncMock(
-        side_effect=IBKRFlexError("Connection failed")
-    )
+    flex_mock.fetch_statement = AsyncMock(side_effect=IBKRFlexError("Connection failed"))
 
     with (
         patch("portfolio.trade_history_service.FlexClient") as flex_cls,
@@ -237,12 +235,8 @@ async def test_flex_sync_repeated_same_broker_is_idempotent(
 
     with patch("portfolio.trade_history_service.FlexClient") as flex_cls:
         flex_cls.from_settings.return_value = flex_mock
-        first = await sync_ibkr_flex_executions(
-            db_session, broker_account.id, "tok", "qid"
-        )
-        second = await sync_ibkr_flex_executions(
-            db_session, broker_account.id, "tok", "qid"
-        )
+        first = await sync_ibkr_flex_executions(db_session, broker_account.id, "tok", "qid")
+        second = await sync_ibkr_flex_executions(db_session, broker_account.id, "tok", "qid")
 
     assert first["fetched"] == 1
     assert first["inserted"] == 1

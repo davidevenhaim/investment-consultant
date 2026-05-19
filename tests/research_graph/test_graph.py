@@ -46,6 +46,7 @@ def _graph(
     ms: FakeMemoryStore | None = None,
 ) -> object:
     from news.fake_provider import FakeNewsProvider
+
     return build_graph_for_session(
         session,
         market_provider=mp,
@@ -324,6 +325,7 @@ async def test_chroma_failure_does_not_crash_run(
 
 # ── M7 LLM graph tests ────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_full_graph_with_fake_llm_client(
     db_session: AsyncSession,
@@ -456,6 +458,7 @@ async def test_score_breakdown_json_has_llm_metadata_when_llm_ran(
     await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
 
     from db.models import NeutralRecommendation as NeutralRecM
+
     result = await db_session.execute(
         select(NeutralRecM).where(NeutralRecM.research_run_id == run.id)
     )
@@ -499,6 +502,7 @@ async def test_evidence_row_created_when_llm_ran(
     await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
 
     from db.models import NeutralRecommendation as NeutralRecM
+
     nr_result = await db_session.execute(
         select(NeutralRecM).where(NeutralRecM.research_run_id == run.id)
     )
@@ -603,6 +607,7 @@ async def test_full_graph_portfolio_context_optional(
 
 # ── M9 portfolio metadata fix (score_breakdown completeness) ──────────────────
 
+
 async def _seed_portfolio(session: AsyncSession, symbol: str, quantity: float = 10.0) -> None:
     """Seed a default portfolio account + position for testing."""
     from db.repositories import PortfolioPositionRepository
@@ -672,7 +677,9 @@ async def test_portfolio_completeness_increases_when_portfolio_seeded(
     final_yes = await _graph(db_session, market_provider, fund_provider).ainvoke(
         make_initial_state(run_yes, ticker_yes, "v0.1.0")
     )
-    completeness_with_portfolio = final_yes["neutral_rec"].score_breakdown.analysis_completeness_score
+    completeness_with_portfolio = final_yes[
+        "neutral_rec"
+    ].score_breakdown.analysis_completeness_score
 
     assert completeness_with_portfolio > completeness_no_portfolio
 

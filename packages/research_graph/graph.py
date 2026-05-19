@@ -3,6 +3,7 @@
 Session-in-closure pattern: nodes needing DB get it bound via factory functions.
 Graph shape is always stable — every node runs (returns stubs if disabled).
 """
+
 from typing import Any
 
 from ai.interfaces import LLMClient

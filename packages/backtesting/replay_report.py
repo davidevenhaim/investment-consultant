@@ -54,9 +54,7 @@ def build_timeline_changes(points: list[dict[str, Any]]) -> list[dict[str, Any]]
         prev_score: int | None = prev.get("neutral_score")
         curr_score: int | None = curr.get("neutral_score")
         neutral_delta: int | None = (
-            (curr_score - prev_score)
-            if prev_score is not None and curr_score is not None
-            else None
+            (curr_score - prev_score) if prev_score is not None and curr_score is not None else None
         )
 
         action_changed = prev["neutral_action"] != curr["neutral_action"]
@@ -140,9 +138,7 @@ def build_timeline_summary(points: list[dict[str, Any]]) -> dict[str, Any]:
             "largest_score_move": None,
         }
 
-    scores: list[int] = [
-        p["neutral_score"] for p in points if p.get("neutral_score") is not None
-    ]
+    scores: list[int] = [p["neutral_score"] for p in points if p.get("neutral_score") is not None]
     first_action: str | None = points[0]["neutral_action"]
     last_action: str | None = points[-1]["neutral_action"]
 

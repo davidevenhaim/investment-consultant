@@ -35,6 +35,7 @@ def test_from_settings_builds_correct_config(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("IBKR_READONLY", "true")
     monkeypatch.setenv("IBKR_TIMEOUT_SECONDS", "15")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     client = IBKRClient.from_settings()
@@ -72,6 +73,7 @@ def test_from_broker_account_local_tws_falls_back_to_settings_when_no_host(
     monkeypatch.setenv("IBKR_HOST", "settings-host")
     monkeypatch.setenv("IBKR_PORT", "7497")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     account = MagicMock()

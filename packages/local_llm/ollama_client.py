@@ -43,17 +43,11 @@ class OllamaClient:
                 resp = await http.post(f"{self._base_url}/api/chat", json=payload)
                 resp.raise_for_status()
         except httpx.ConnectError as exc:
-            raise OllamaConnectionError(
-                f"Cannot connect to Ollama at {self._base_url}"
-            ) from exc
+            raise OllamaConnectionError(f"Cannot connect to Ollama at {self._base_url}") from exc
         except httpx.TimeoutException as exc:
-            raise OllamaConnectionError(
-                f"Ollama request timed out after {self._timeout}s"
-            ) from exc
+            raise OllamaConnectionError(f"Ollama request timed out after {self._timeout}s") from exc
         except httpx.HTTPStatusError as exc:
-            raise OllamaConnectionError(
-                f"Ollama returned HTTP {exc.response.status_code}"
-            ) from exc
+            raise OllamaConnectionError(f"Ollama returned HTTP {exc.response.status_code}") from exc
 
         raw: dict[str, Any] = resp.json()
         message = raw.get("message", {})

@@ -87,7 +87,9 @@ def _valid_analysis_dict() -> dict[str, Any]:
         "headline": "Outperformed benchmark by 169%",
         "plain_english_summary": "The advisor made money.",
         "performance_drivers": [{"title": "AAPL", "explanation": "went up", "symbols": ["AAPL"]}],
-        "risk_notes": [{"title": "Small sample", "explanation": "only 3 trades", "severity": "HIGH"}],
+        "risk_notes": [
+            {"title": "Small sample", "explanation": "only 3 trades", "severity": "HIGH"}
+        ],
         "trade_commentary": [{"symbol": "AAPL", "comment": "good entry"}],
         "what_the_advisor_should_learn": ["buy dips"],
         "data_quality_warnings": ["synthetic data"],
@@ -131,7 +133,7 @@ def test_sample_equity_points_includes_first_and_last() -> None:
 def test_sample_equity_points_includes_worst_drawdown() -> None:
     pts = [
         {"date": "2026-01-01", "equity": 100.0, "drawdown_pct": 0.0},
-        {"date": "2026-01-10", "equity": 80.0, "drawdown_pct": -0.20},   # worst
+        {"date": "2026-01-10", "equity": 80.0, "drawdown_pct": -0.20},  # worst
         {"date": "2026-01-20", "equity": 90.0, "drawdown_pct": -0.10},
         {"date": "2026-01-30", "equity": 95.0, "drawdown_pct": -0.05},
     ]
@@ -305,6 +307,7 @@ async def test_service_returns_existing_when_force_false(db_session: Any, monkey
 
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -347,6 +350,7 @@ async def test_service_v1_completed_not_reused_when_prompt_is_v2(
 
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -390,6 +394,7 @@ async def test_service_regenerates_when_force_true(db_session: Any, monkeypatch:
 
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -427,6 +432,7 @@ async def test_service_disabled_raises_without_persisting(
 
     monkeypatch.setenv("OLLAMA_ENABLED", "false")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -441,12 +447,16 @@ async def test_service_disabled_raises_without_persisting(
 
     # No row should be persisted
     rows = (
-        await db_session.execute(
-            select(AdvisorBacktestAnalysis).where(
-                AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+        (
+            await db_session.execute(
+                select(AdvisorBacktestAnalysis).where(
+                    AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows == []
 
 
@@ -460,6 +470,7 @@ async def test_service_connection_error_persists_failed_row(
 
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -468,7 +479,10 @@ async def test_service_connection_error_persists_failed_row(
     mock_client = AsyncMock()
     mock_client.chat_json = AsyncMock(side_effect=OllamaConnectionError("refused"))
 
-    with patch("local_llm.service.OllamaClient", return_value=mock_client), pytest.raises(OllamaConnectionError):
+    with (
+        patch("local_llm.service.OllamaClient", return_value=mock_client),
+        pytest.raises(OllamaConnectionError),
+    ):
         await generate_advisor_backtest_analysis(
             session=db_session,
             user_id=user_id,
@@ -476,12 +490,16 @@ async def test_service_connection_error_persists_failed_row(
         )
 
     rows = (
-        await db_session.execute(
-            select(AdvisorBacktestAnalysis).where(
-                AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+        (
+            await db_session.execute(
+                select(AdvisorBacktestAnalysis).where(
+                    AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].status == "FAILED"
     assert "refused" in (rows[0].error_message or "")
@@ -489,15 +507,14 @@ async def test_service_connection_error_persists_failed_row(
 
 
 @pytest.mark.asyncio
-async def test_service_parse_error_persists_failed_row(
-    db_session: Any, monkeypatch: Any
-) -> None:
+async def test_service_parse_error_persists_failed_row(db_session: Any, monkeypatch: Any) -> None:
     from db.models import AdvisorBacktestAnalysis
     from local_llm.service import generate_advisor_backtest_analysis
     from sqlalchemy import select
 
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -506,7 +523,10 @@ async def test_service_parse_error_persists_failed_row(
     mock_client = AsyncMock()
     mock_client.chat_json = AsyncMock(side_effect=OllamaParseError("invalid JSON"))
 
-    with patch("local_llm.service.OllamaClient", return_value=mock_client), pytest.raises(OllamaParseError):
+    with (
+        patch("local_llm.service.OllamaClient", return_value=mock_client),
+        pytest.raises(OllamaParseError),
+    ):
         await generate_advisor_backtest_analysis(
             session=db_session,
             user_id=user_id,
@@ -514,12 +534,16 @@ async def test_service_parse_error_persists_failed_row(
         )
 
     rows = (
-        await db_session.execute(
-            select(AdvisorBacktestAnalysis).where(
-                AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+        (
+            await db_session.execute(
+                select(AdvisorBacktestAnalysis).where(
+                    AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].status == "FAILED"
     assert rows[0].prompt_version == OLLAMA_BACKTEST_ANALYST_PROMPT_VERSION
@@ -535,6 +559,7 @@ async def test_service_successful_call_stores_completed_row(
 
     monkeypatch.setenv("OLLAMA_ENABLED", "true")
     from core.config import get_settings
+
     get_settings.cache_clear()
 
     user_id = uuid.uuid4()
@@ -561,11 +586,15 @@ async def test_service_successful_call_stores_completed_row(
     assert "display_metrics" in result.prompt_input_json
 
     rows = (
-        await db_session.execute(
-            select(AdvisorBacktestAnalysis).where(
-                AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+        (
+            await db_session.execute(
+                select(AdvisorBacktestAnalysis).where(
+                    AdvisorBacktestAnalysis.advisor_backtest_run_id == run.id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].status == "COMPLETED"

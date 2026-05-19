@@ -58,7 +58,7 @@ class NewsAPIProvider(NewsProvider):
             data = resp.json()
 
         articles: list[NewsArticle] = []
-        for raw in (data.get("articles") or []):
+        for raw in data.get("articles") or []:
             url = raw.get("url") or ""
             if not url:
                 continue
@@ -97,17 +97,63 @@ class NewsAPIProvider(NewsProvider):
         return articles[:max_articles]
 
 
-_POSITIVE_WORDS = frozenset({
-    "beat", "beats", "surge", "surges", "soar", "soars", "record", "growth",
-    "profit", "gain", "rally", "strong", "bullish", "upgrade", "raises",
-    "exceeds", "outperform", "buy", "positive", "higher", "upside",
-})
-_NEGATIVE_WORDS = frozenset({
-    "miss", "misses", "decline", "declines", "fall", "falls", "loss", "losses",
-    "downgrade", "cut", "cuts", "warn", "warns", "risk", "risks", "concern",
-    "bearish", "sell", "lower", "downside", "struggle", "struggles", "lawsuit",
-    "layoff", "layoffs", "recall", "investigation", "fraud",
-})
+_POSITIVE_WORDS = frozenset(
+    {
+        "beat",
+        "beats",
+        "surge",
+        "surges",
+        "soar",
+        "soars",
+        "record",
+        "growth",
+        "profit",
+        "gain",
+        "rally",
+        "strong",
+        "bullish",
+        "upgrade",
+        "raises",
+        "exceeds",
+        "outperform",
+        "buy",
+        "positive",
+        "higher",
+        "upside",
+    }
+)
+_NEGATIVE_WORDS = frozenset(
+    {
+        "miss",
+        "misses",
+        "decline",
+        "declines",
+        "fall",
+        "falls",
+        "loss",
+        "losses",
+        "downgrade",
+        "cut",
+        "cuts",
+        "warn",
+        "warns",
+        "risk",
+        "risks",
+        "concern",
+        "bearish",
+        "sell",
+        "lower",
+        "downside",
+        "struggle",
+        "struggles",
+        "lawsuit",
+        "layoff",
+        "layoffs",
+        "recall",
+        "investigation",
+        "fraud",
+    }
+)
 
 
 def _heuristic_sentiment(title_lower: str) -> float:

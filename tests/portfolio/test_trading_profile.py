@@ -88,8 +88,22 @@ class TestFifoMatch:
 class TestWinRate:
     def test_50_pct(self) -> None:
         pairs = [
-            TradePair("A", 100, 120, 1, dt.datetime(2025, 1, 1, tzinfo=dt.UTC), dt.datetime(2025, 2, 1, tzinfo=dt.UTC)),
-            TradePair("A", 100, 80, 1, dt.datetime(2025, 1, 1, tzinfo=dt.UTC), dt.datetime(2025, 2, 1, tzinfo=dt.UTC)),
+            TradePair(
+                "A",
+                100,
+                120,
+                1,
+                dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2025, 2, 1, tzinfo=dt.UTC),
+            ),
+            TradePair(
+                "A",
+                100,
+                80,
+                1,
+                dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2025, 2, 1, tzinfo=dt.UTC),
+            ),
         ]
         assert _win_rate(pairs) == pytest.approx(0.5)
 
@@ -100,24 +114,44 @@ class TestWinRate:
 class TestDispositionEffect:
     def test_positive_disposition(self) -> None:
         # Winners held 10 days, losers held 40 days → strong disposition effect
-        winner = TradePair("A", 100, 120, 1,
-                           dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
-                           dt.datetime(2025, 1, 11, tzinfo=dt.UTC))
-        loser = TradePair("A", 100, 80, 1,
-                          dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
-                          dt.datetime(2025, 2, 10, tzinfo=dt.UTC))
+        winner = TradePair(
+            "A",
+            100,
+            120,
+            1,
+            dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2025, 1, 11, tzinfo=dt.UTC),
+        )
+        loser = TradePair(
+            "A",
+            100,
+            80,
+            1,
+            dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2025, 2, 10, tzinfo=dt.UTC),
+        )
         score = _disposition_effect_score([winner, loser])
         assert score is not None
         assert score > 0.5  # (40-10)/40 = 0.75
 
     def test_no_disposition_if_symmetric(self) -> None:
         # Same holding time → score near 0
-        winner = TradePair("A", 100, 120, 1,
-                           dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
-                           dt.datetime(2025, 1, 31, tzinfo=dt.UTC))
-        loser = TradePair("A", 100, 80, 1,
-                          dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
-                          dt.datetime(2025, 1, 31, tzinfo=dt.UTC))
+        winner = TradePair(
+            "A",
+            100,
+            120,
+            1,
+            dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2025, 1, 31, tzinfo=dt.UTC),
+        )
+        loser = TradePair(
+            "A",
+            100,
+            80,
+            1,
+            dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2025, 1, 31, tzinfo=dt.UTC),
+        )
         score = _disposition_effect_score([winner, loser])
         assert score is not None
         assert score == pytest.approx(0.0, abs=0.01)
@@ -173,9 +207,9 @@ class TestBuildTradingProfile:
     def test_behavioral_flags_low_win_rate(self) -> None:
         execs = [
             _exec("b1", "A", "BUY", 10, 100, 0),
-            _exec("s1", "A", "SELL", 10, 80, 30),   # loser
+            _exec("s1", "A", "SELL", 10, 80, 30),  # loser
             _exec("b2", "B", "BUY", 10, 100, 5),
-            _exec("s2", "B", "SELL", 10, 75, 35),   # loser
+            _exec("s2", "B", "SELL", 10, 75, 35),  # loser
             _exec("b3", "C", "BUY", 10, 100, 10),
             _exec("s3", "C", "SELL", 10, 115, 40),  # winner
         ]

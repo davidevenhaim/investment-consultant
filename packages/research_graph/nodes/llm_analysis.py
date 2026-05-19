@@ -1,4 +1,5 @@
 """LLM analysis node — single node, one API call, returns CombinedLLMAnalysis."""
+
 from collections.abc import Callable
 from typing import Any
 
@@ -40,6 +41,7 @@ def make_llm_analysis(
                 logger.warning("llm_analysis_skipped_no_key", symbol=symbol)
                 return _disabled_result(symbol)
             from ai.client import AnthropicLLMClient
+
             client = AnthropicLLMClient(
                 api_key=settings.anthropic_api_key,
                 model=settings.llm_model,

@@ -75,8 +75,7 @@ async def _run_flex_diagnostics(token: str, query_id: str) -> dict[str, Any]:
 
     if not token.strip() or not query_id.strip():
         result["error"] = (
-            "Token or query_id missing. "
-            "Set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in environment."
+            "Token or query_id missing. Set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in environment."
         )
         return result
 

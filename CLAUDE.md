@@ -633,7 +633,7 @@ make run         # trigger a manual research run via CLI
 
 ## What to build next
 
-**Currently on Milestone 12.2.**
+**Currently on Milestone 12.7.2.**
 
 When asked to build a milestone, always:
 1. Read this file first
@@ -646,7 +646,7 @@ When asked to build a milestone, always:
 
 ## Current project state
 
-> Last verified: M12.2 complete.
+> Last verified: M12.7.2 complete.
 
 ### Quality gate (verified before M9.7)
 - `make test` — passing
@@ -1100,6 +1100,69 @@ now include `as_of_date` so replay vs. live is visible in worker logs.
 
 Advisor backtests over `REAL` replay data are useful for pipeline testing but not
 yet institutional-grade historical backtests (fundamentals/memory still current).
+
+---
+
+**M12.7 — Historical Replay Batch Observability**
+
+New API endpoints (`apps/api/routers/research_runs.py`):
+```
+GET  /api/v1/research-runs/historical-replay/{replay_batch_id}
+     → batch status: total, completed/failed/running/queued counts,
+       progress_pct, elapsed_seconds, per-run list with as_of_date + status
+POST /api/v1/research-runs/historical-replay/{replay_batch_id}/backtest
+     → run an advisor backtest directly over a completed replay batch;
+       date window derived from batch min/max as_of_date;
+       supports initial_positions (pre-seeded holdings at start_date price)
+```
+
+New CLI tool (`apps/cli/replay_status.py`):
+```bash
+python -m apps.cli.replay_status <replay_batch_id> [--user-id <uuid>]
+# prints per-run status table + progress %
+```
+
+Repository additions:
+- `ResearchRunRepository.get_by_replay_batch_id(replay_batch_id, user_id)` — returns all runs for a batch, ordered by as_of_date
+
+Bug fix: worker event loop reuse for replay tasks — replay Celery tasks now get an isolated event loop (same pattern as `sync_runner.py`).
+
+---
+
+**M12.7.2 — Position-Aware Recommendation Evaluation**
+
+New API endpoint:
+```
+GET  /api/v1/research-runs/historical-replay/{replay_batch_id}/report
+     → deterministic quality report; no LLM, no external I/O
+       groups neutral + personalized recs by symbol across replay dates
+       returns per-symbol: timeline points, timeline changes (score deltas,
+       action flips, top changed score components), timeline summary
+       (first/last action, score_change, max/min score, largest_score_move)
+```
+
+New module (`packages/backtesting/replay_report.py`):
+- `build_report_point(...)` — constructs one timeline dict per run×symbol
+- `build_timeline_changes(points)` — per-step change records with `explanation` string
+- `build_timeline_summary(points)` — aggregate stats across the timeline
+- Pure Python: no DB, no LLM, no I/O
+
+`advisor_simulation.run_advisor_backtest()` gains:
+- `pinned_run_ids: list[uuid.UUID] | None` — bypass date/source filter; use these runs directly (used by replay batch backtest endpoint)
+- `initial_positions: list[dict] | None` — pre-seed holdings priced at `start_date`; raises `ValueError` if cost exceeds `initial_cash`
+
+New schemas (`packages/db/schemas.py`):
+- `InitialPositionItem` — `symbol` + `quantity` for pre-seeded positions
+- `ReplayBatchBacktestRequest` — request body for `POST .../backtest`
+
+Repository additions:
+- `RecommendationRepository.get_neutral_recs_by_run_ids(run_ids)` — batch fetch
+- `RecommendationRepository.get_latest_personalized_by_neutral_ids(neutral_ids)` — returns `{neutral_id: personalized_rec}` map
+
+Tests added:
+- `tests/api/test_historical_replay.py` — batch status + backtest + report endpoints
+- `tests/api/test_replay_report.py` — 446-line suite for report endpoint
+- `tests/backtesting/test_advisor_simulation.py` — pinned_run_ids + initial_positions
 
 ---
 

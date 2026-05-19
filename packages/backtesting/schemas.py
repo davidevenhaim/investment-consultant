@@ -29,7 +29,7 @@ class ForwardOutcome:
     max_runup_pct: float | None = None
 
     # Classification
-    outcome_status: str = "PENDING"   # PENDING | MEASURED | INSUFFICIENT_DATA | ERROR
+    outcome_status: str = "PENDING"  # PENDING | MEASURED | INSUFFICIENT_DATA | ERROR
     outcome_label: str | None = None  # WIN | LOSS | NEUTRAL | AVOIDED_LOSS | MISSED_UPSIDE
 
     # Debug / raw metadata
