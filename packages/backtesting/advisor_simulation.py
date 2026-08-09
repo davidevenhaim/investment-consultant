@@ -102,15 +102,6 @@ class _Position:
         self.qty += qty
         self.avg_cost = total_cost / self.qty if self.qty > 0 else 0.0
 
-    def close_partial(self, qty: float) -> float:
-        """Remove qty shares; return realised P/L."""
-        qty = min(qty, self.qty)
-        realised_pnl = qty * (0.0 - self.avg_cost)  # will be updated by caller
-        self.qty = max(0.0, self.qty - qty)
-        if self.qty == 0:
-            self.avg_cost = 0.0
-        return realised_pnl
-
 
 @dataclass
 class _SimState:
