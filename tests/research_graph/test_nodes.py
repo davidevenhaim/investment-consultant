@@ -392,6 +392,35 @@ def test_neutral_recommendation_config_thresholds_respected() -> None:
     )
 
 
+def test_neutral_recommendation_applies_node_confidence_penalties() -> None:
+    baseline_state = _base_state("AAPL")
+    baseline_state["technical_signals"] = _signals_bullish()
+    baseline_state["fundamentals_snapshot"] = _make_snapshot("AAPL")
+    baseline_state["fundamentals_data_quality"] = 1.0
+    baseline = neutral_recommendation(baseline_state)["neutral_rec"]
+
+    penalized_state = _base_state("AAPL")
+    penalized_state["technical_signals"] = _signals_bullish()
+    penalized_state["fundamentals_snapshot"] = _make_snapshot("AAPL")
+    penalized_state["fundamentals_data_quality"] = 1.0
+    penalized_state["confidence_penalties"] = [0.20, 0.05]
+    penalized = neutral_recommendation(penalized_state)["neutral_rec"]
+
+    assert baseline is not None and penalized is not None
+    assert penalized.score == baseline.score  # penalties affect confidence, not score
+    assert penalized.confidence == pytest.approx(max(0.0, baseline.confidence - 0.25), abs=1e-3)
+
+
+def test_neutral_recommendation_penalties_never_negative_confidence() -> None:
+    state = _base_state("AAPL")
+    state["technical_signals"] = None
+    state["fundamentals_snapshot"] = None
+    state["confidence_penalties"] = [0.40, 0.40, 0.40]
+    rec = neutral_recommendation(state)["neutral_rec"]
+    assert rec is not None
+    assert rec.confidence == 0.0
+
+
 # ── personalized_recommendation ───────────────────────────────────────────────
 
 

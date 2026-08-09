@@ -9,7 +9,9 @@ from research_graph.state import NeutralRecState, ResearchState, ScoreBreakdown
 
 logger = get_logger(__name__)
 
-_PORTFOLIO_FIT_STUB: float = 7.0  # /15 — M9
+# Neutral prior /15 when no portfolio account exists; replaced with the real
+# portfolio fit score by load_portfolio_context when portfolio data is available.
+_PORTFOLIO_FIT_STUB: float = 7.0
 
 
 # ── Technical score (M4+) ─────────────────────────────────────────────────────
@@ -349,9 +351,8 @@ def _build_completeness(
 def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
     """
     Deterministic scoring engine.
-    Technical + Risk: real M4 data.
-    Fundamental + Valuation: real M5 data.
-    News + Portfolio: stubs (M8/M9).
+    Technical + Risk + Fundamental + Valuation + News: real data when available.
+    Portfolio fit: neutral prior here; replaced by load_portfolio_context downstream.
     """
     symbol = state["symbol"]
     signals = state.get("technical_signals") or {}
@@ -414,6 +415,10 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
         # Reduce confidence if fundamentals missing
         if fdq < 0.3:
             confidence = min(confidence, 0.70)
+        # Apply penalties accumulated by upstream nodes (fetch/signal failures)
+        node_penalty = sum(state.get("confidence_penalties") or [])
+        if node_penalty > 0:
+            confidence = max(0.0, confidence - node_penalty)
 
         # Build missing_details for final output
         missing_details: list[str] = []
@@ -422,7 +427,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
                 "News data unavailable. Recent material events may not be reflected."
             )
         missing_details.append(
-            "Portfolio context not available (M9). Position-aware recommendations pending."
+            "Portfolio context not yet loaded. Personalized view may adjust this recommendation."
         )
         if fdq < 0.3:
             missing_details.append(
@@ -444,7 +449,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             reasons.append(f"Positive 3-month momentum (+{r3m:.1%}).")
         elif r3m is not None:
             risks.append(f"Negative 3-month momentum ({r3m:.1%}).")
-        risks.append("Portfolio context pending (M9).")
+        risks.append("Portfolio context pending.")
 
         # ── M7: Apply LLM qualitative output ────────────────────────────────
         llm: Any = state.get("llm_analysis")
@@ -535,6 +540,8 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             fund=fund,
             val=val,
             completeness=completeness,
+            node_confidence_penalty=round(node_penalty, 3),
+            confidence=round(confidence, 3),
         )
         return {
             "neutral_rec": rec,
