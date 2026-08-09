@@ -24,10 +24,10 @@ def make_fetch_market_data(
     async def fetch_market_data(state: ResearchState) -> dict[str, Any]:
         symbol = state["symbol"]
         as_of_date_str: str | None = state.get("as_of_date")
-        as_of_date: dt.date | None = (
-            dt.date.fromisoformat(as_of_date_str) if as_of_date_str else None
-        )
         try:
+            as_of_date: dt.date | None = (
+                dt.date.fromisoformat(as_of_date_str) if as_of_date_str else None
+            )
             bars = await ensure_price_history(
                 session, symbol, years=5, provider=provider, as_of_date=as_of_date
             )

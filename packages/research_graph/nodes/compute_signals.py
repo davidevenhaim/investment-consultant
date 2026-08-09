@@ -26,11 +26,11 @@ def make_compute_signals(
         symbol = state["symbol"]
         ohlcv = state.get("ohlcv")
         as_of_date_str: str | None = state.get("as_of_date")
-        as_of_date: dt.date | None = (
-            dt.date.fromisoformat(as_of_date_str) if as_of_date_str else None
-        )
 
         try:
+            as_of_date: dt.date | None = (
+                dt.date.fromisoformat(as_of_date_str) if as_of_date_str else None
+            )
             if ohlcv is None or ohlcv.empty:
                 logger.warning("compute_signals_no_ohlcv", symbol=symbol)
                 return {
