@@ -77,13 +77,13 @@ def apply_policy(
 
     current = action
     checks: list[dict[str, Any]] = []
-    cap_applied: str | None = None
+    caps_applied: list[str] = []
     reasons: list[str] = []
 
     # Gate 1: market data quality too low → WATCHLIST
     if data_quality_score < dq_thresh_rec and _is_buy(current):
         current = RecommendationAction.WATCHLIST
-        cap_applied = "low_market_data_quality"
+        caps_applied.append("low_market_data_quality")
         checks.append(
             {
                 "gate": "low_market_data_quality",
@@ -109,7 +109,7 @@ def apply_policy(
         capped = RecommendationAction(cap_value)
         if _action_rank(capped) < _action_rank(current):
             current = capped
-            cap_applied = "low_fundamentals_quality"
+            caps_applied.append("low_fundamentals_quality")
         checks.append(
             {
                 "gate": "low_fundamentals_quality",
@@ -133,7 +133,7 @@ def apply_policy(
     # Gate 3: min confidence to buy
     if confidence < conf_thresh and _is_buy(current):
         current = RecommendationAction.WATCHLIST
-        cap_applied = cap_applied or "low_confidence"
+        caps_applied.append("low_confidence")
         checks.append(
             {
                 "gate": "min_confidence",
@@ -155,7 +155,7 @@ def apply_policy(
     # Gate 4: market data quality gate for strong buy (higher bar)
     if data_quality_score < dq_thresh_buy and _is_strong_buy(current):
         current = RecommendationAction.BUY_CANDIDATE
-        cap_applied = cap_applied or "insufficient_data_for_strong_buy"
+        caps_applied.append("insufficient_data_for_strong_buy")
         checks.append(
             {
                 "gate": "min_data_quality_strong_buy",
@@ -173,7 +173,7 @@ def apply_policy(
         capped = RecommendationAction(cap_value)
         if _action_rank(capped) < _action_rank(current):
             current = capped
-            cap_applied = cap_applied or "missing_news"
+            caps_applied.append("missing_news")
         checks.append(
             {
                 "gate": "missing_news",
@@ -192,7 +192,7 @@ def apply_policy(
         capped = RecommendationAction(cap_value)
         if _action_rank(capped) < _action_rank(current):
             current = capped
-            cap_applied = cap_applied or "missing_portfolio_context"
+            caps_applied.append("missing_portfolio_context")
         checks.append(
             {
                 "gate": "missing_portfolio_context",
@@ -212,7 +212,7 @@ def apply_policy(
     # Gate 7: position overweight → downgrade buy
     if current_position_weight > max_weight and _is_buy(current):
         current = RecommendationAction.HOLD
-        cap_applied = cap_applied or "position_overweight"
+        caps_applied.append("position_overweight")
         checks.append(
             {
                 "gate": "max_position_weight",
@@ -235,7 +235,7 @@ def apply_policy(
         original_action=action,
         final_action=current,
         policy_checks=checks,
-        action_cap_applied=cap_applied,
+        action_cap_applied=",".join(caps_applied) if caps_applied else None,
         reasons=reasons,
     )
 

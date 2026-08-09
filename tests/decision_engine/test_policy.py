@@ -175,3 +175,22 @@ def test_policy_result_has_all_expected_gates() -> None:
 def test_original_action_preserved_in_result() -> None:
     result = _call(action=RecommendationAction.STRONG_BUY, missing=["news"])
     assert result.original_action == RecommendationAction.STRONG_BUY
+
+
+def test_single_cap_recorded() -> None:
+    result = _call(confidence=0.50, missing=[])
+    assert result.action_cap_applied == "low_confidence"
+
+
+def test_multiple_caps_all_recorded() -> None:
+    # STRONG_BUY: missing news caps to BUY_CANDIDATE, then overweight caps to HOLD
+    result = _call(
+        action=RecommendationAction.STRONG_BUY,
+        missing=["news"],
+        has_position=True,
+        current_weight=0.30,
+    )
+    assert result.final_action == RecommendationAction.HOLD
+    caps = (result.action_cap_applied or "").split(",")
+    assert "missing_news" in caps
+    assert "position_overweight" in caps
