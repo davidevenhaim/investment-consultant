@@ -6,6 +6,8 @@ _MAX_MEMORY_CHARS = 500  # per memory entry
 _MAX_NEWS_TITLE_CHARS = 120
 _MAX_NEWS_DESC_CHARS = 200
 _MAX_NEWS_ARTICLES = 5
+_MAX_SOCIAL_POSTS = 5
+_MAX_SOCIAL_BODY_CHARS = 240
 
 
 def _fmt_pct(v: float | None) -> str:
@@ -138,6 +140,33 @@ def build_context(state: dict[str, Any]) -> str:
     else:
         lines.append("No news data available.")
 
+    # Social sentiment (StockTwits/X)
+    social_posts: list[dict[str, Any]] = state.get("social_posts") or []
+    social_score_result: Any = state.get("social_score_result")
+    if social_posts:
+        lines += ["", "=== Social Sentiment (StockTwits/X) ==="]
+        for i, post in enumerate(social_posts[:_MAX_SOCIAL_POSTS], 1):
+            body = str(post.get("body") or "")[:_MAX_SOCIAL_BODY_CHARS]
+            author = post.get("author_handle") or "unknown"
+            posted = str(post.get("posted_at") or "")[:10]
+            sentiment = post.get("sentiment_score")
+            sent_str = f" (sentiment: {sentiment:+.2f})" if sentiment is not None else ""
+            likes = post.get("likes_count", 0)
+            lines.append(f"Post {i}: [@{author}] {posted} — {body} ({likes} likes){sent_str}")
+        if social_score_result is not None and not getattr(social_score_result, "no_data", False):
+            lines.append(
+                f"Social score: {social_score_result.score:.1f}/15 — {social_score_result.reason}"
+            )
+        social_llm: Any = state.get("social_llm_analysis")
+        if social_llm is not None and getattr(social_llm, "llm_enabled", False):
+            lines.append(f"Social LLM read: {social_llm.overall_sentiment}")
+            if social_llm.key_themes:
+                lines.append(f"Social themes: {', '.join(social_llm.key_themes[:5])}")
+            if social_llm.hype_or_manipulation_flags:
+                lines.append(
+                    f"Hype flags: {', '.join(social_llm.hype_or_manipulation_flags[:3])}"
+                )
+
     # ── M9.5/M9.6: trading history context ───────────────────────────────────
     symbol_trading_stats: dict[str, Any] | None = state.get("symbol_trading_stats")
     behavioral_flags: list[str] = state.get("behavioral_flags") or []
@@ -170,6 +199,45 @@ def build_context(state: dict[str, Any]) -> str:
         "=== Data Gaps (do not speculate about these) ===",
         "SEC filings: NOT AVAILABLE (M17 pending)",
     ]
+
+    return "\n".join(lines)
+
+
+def build_social_context(state: dict[str, Any]) -> str:
+    """
+    Compact context for the social sentiment prompt — posts + deterministic score only.
+    """
+    symbol = state.get("symbol", "UNKNOWN")
+    social_posts: list[dict[str, Any]] = state.get("social_posts") or []
+    social_score_result: Any = state.get("social_score_result")
+    news_score_result: Any = state.get("news_score_result")
+
+    lines: list[str] = [f"Symbol: {symbol}", "", "=== Social Posts ==="]
+    for i, post in enumerate(social_posts[:_MAX_SOCIAL_POSTS * 2], 1):
+        body = str(post.get("body") or "")[:_MAX_SOCIAL_BODY_CHARS]
+        author = post.get("author_handle") or "unknown"
+        posted = str(post.get("posted_at") or "")[:10]
+        sentiment = post.get("sentiment_score")
+        sent_str = f" (tagged sentiment: {sentiment:+.2f})" if sentiment is not None else ""
+        likes = post.get("likes_count", 0)
+        reposts = post.get("reposts_count", 0)
+        lines.append(
+            f"Post {i} @{author} {posted}: {body} ({likes} likes, {reposts} reposts){sent_str}"
+        )
+    if not social_posts:
+        lines.append("No social posts available.")
+
+    if social_score_result is not None and not getattr(social_score_result, "no_data", False):
+        lines += [
+            "",
+            f"Deterministic social score: {social_score_result.score:.1f}/15 "
+            f"— {social_score_result.reason}",
+        ]
+    if news_score_result is not None and not getattr(news_score_result, "no_data", False):
+        lines += [
+            f"Deterministic news score: {news_score_result.score:.1f}/15 "
+            f"— {news_score_result.reason}",
+        ]
 
     return "\n".join(lines)
 

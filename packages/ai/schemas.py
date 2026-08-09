@@ -78,6 +78,24 @@ class CombinedLLMAnalysis(BaseModel):
     analysis_quality_score: float = Field(ge=0.0, le=1.0)
 
 
+class SocialSentimentAnalysis(BaseModel):
+    """LLM read of social posts (StockTwits/X). Evidence only — never a decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    overall_sentiment: Literal["BULLISH", "BEARISH", "MIXED", "NEUTRAL"]
+    key_themes: list[str]
+    hype_or_manipulation_flags: list[str]
+    risk_flags: list[str]
+    divergence_from_news: str
+    should_reduce_confidence: bool
+    confidence_penalty: Annotated[float, Field(ge=0.0, le=0.15)]
+    confidence: float = Field(ge=0.0, le=1.0)
+    llm_enabled: bool = True
+    llm_model: str | None = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _FORBIDDEN_KEYS = frozenset(
@@ -144,6 +162,23 @@ def _empty_critic(symbol: str) -> CriticReview:
         should_reduce_confidence=False,
         confidence_penalty=0.0,
         confidence=0.0,
+    )
+
+
+def empty_social_analysis(symbol: str, llm_model: str | None = None) -> SocialSentimentAnalysis:
+    """Return a valid empty social analysis for when LLM is disabled or failed."""
+    return SocialSentimentAnalysis(
+        symbol=symbol,
+        overall_sentiment="NEUTRAL",
+        key_themes=[],
+        hype_or_manipulation_flags=[],
+        risk_flags=[],
+        divergence_from_news="",
+        should_reduce_confidence=False,
+        confidence_penalty=0.0,
+        confidence=0.0,
+        llm_enabled=False,
+        llm_model=llm_model,
     )
 
 

@@ -135,6 +135,40 @@ critic:
 Respond now with only the JSON object. No other text.\
 """
 
+_SOCIAL_SENTIMENT_NAME: str = "social_sentiment_analysis"
+_SOCIAL_SENTIMENT_VERSION: str = "v0.1.0"
+_SOCIAL_SENTIMENT_PROMPT: str = """\
+CRITICAL RULES — READ BEFORE RESPONDING:
+1. You are a social sentiment analyst. You do NOT make buy/sell/hold decisions.
+2. Do NOT output any field named "action", "recommendation", "buy", "sell", "hold",
+   "target_price", "position_size", or "score". These fields cause validation failure.
+3. Do NOT invent posts, events, or facts. Base analysis ONLY on the posts provided.
+4. Social posts are unverified opinions — treat them as sentiment signals, not facts.
+5. Flag hype, coordinated promotion, or manipulation patterns if you see them.
+6. Respond ONLY with valid JSON matching the schema exactly. No preamble. No markdown.
+
+=== SOCIAL CONTEXT FOR {{SYMBOL}} ===
+{{CONTEXT}}
+
+=== REQUIRED JSON SCHEMA ===
+Respond with a single JSON object with exactly these keys:
+{
+  "symbol": string,
+  "overall_sentiment": one of ["BULLISH","BEARISH","MIXED","NEUTRAL"],
+  "key_themes": list[string] (max 5, recurring topics across posts),
+  "hype_or_manipulation_flags": list[string] (empty if none observed),
+  "risk_flags": list[string] (risks mentioned or implied by posts, empty if none),
+  "divergence_from_news": string (how social sentiment differs from the news score,
+    empty string if aligned or no news data),
+  "should_reduce_confidence": boolean (true if posts look like hype/manipulation
+    or are too sparse to trust),
+  "confidence_penalty": float between 0.0 and 0.15,
+  "confidence": float between 0.0 and 1.0
+}
+
+Respond now with only the JSON object. No other text.\
+"""
+
 _WATCHLIST: list[dict[str, str]] = [
     {"symbol": "AAPL", "company_name": "Apple Inc.", "exchange": "NASDAQ"},
     {"symbol": "NVDA", "company_name": "NVIDIA Corporation", "exchange": "NASDAQ"},
@@ -215,6 +249,24 @@ async def seed() -> None:
             logger.info("seed_combined_analysis_prompt_created", name=ca.name, version=ca.version)
         else:
             logger.info("seed_combined_analysis_prompt_exists", name=existing_ca.name)
+
+        # Social sentiment prompt for social LLM analysis node
+        existing_ss = await pv_repo.get_by_name_version(
+            _SOCIAL_SENTIMENT_NAME, _SOCIAL_SENTIMENT_VERSION
+        )
+        if existing_ss is None:
+            from ai.schemas import SocialSentimentAnalysis  # noqa: PLC0415
+
+            ss = await pv_repo.create(
+                name=_SOCIAL_SENTIMENT_NAME,
+                version=_SOCIAL_SENTIMENT_VERSION,
+                prompt_text=_SOCIAL_SENTIMENT_PROMPT,
+                output_schema=SocialSentimentAnalysis.model_json_schema(),
+                is_active=True,
+            )
+            logger.info("seed_social_sentiment_prompt_created", name=ss.name, version=ss.version)
+        else:
+            logger.info("seed_social_sentiment_prompt_exists", name=existing_ss.name)
 
         result = await session.execute(
             select(InvestorProfile)

@@ -12,9 +12,11 @@ from ai.schemas import (
     CriticReview,
     MissingDetailsAnalysis,
     RiskAnalysis,
+    SocialSentimentAnalysis,
     ThesisAnalysis,
     check_forbidden_keys,
     empty_analysis,
+    empty_social_analysis,
 )
 
 logger = get_logger(__name__)
@@ -117,3 +119,74 @@ async def run_llm_analysis(
         warnings.append(msg)
 
     return empty_analysis(symbol, model), warnings
+
+
+def _parse_and_validate_social(
+    raw_text: str, symbol: str, model: str
+) -> SocialSentimentAnalysis:
+    """
+    Parse raw LLM JSON → validate SocialSentimentAnalysis.
+    Raises LLMParseError on any parse/validation failure.
+    """
+    try:
+        raw: dict[str, Any] = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise LLMParseError(f"LLM returned invalid JSON: {exc}", {"symbol": symbol}) from exc
+
+    if not isinstance(raw, dict):
+        raise LLMParseError("LLM response is not a JSON object.", {"symbol": symbol})
+
+    forbidden = check_forbidden_keys(raw)
+    if forbidden:
+        raise LLMParseError(
+            f"LLM response contains forbidden keys: {forbidden}",
+            {"symbol": symbol, "forbidden": forbidden},
+        )
+
+    try:
+        analysis = SocialSentimentAnalysis.model_validate(
+            {**raw, "llm_enabled": True, "llm_model": model}
+        )
+    except Exception as exc:
+        raise LLMParseError(
+            f"LLM response failed schema validation: {exc}", {"symbol": symbol}
+        ) from exc
+    return analysis
+
+
+async def run_social_llm_analysis(
+    symbol: str,
+    prompt: str,
+    client: LLMClient,
+    model: str,
+) -> tuple[SocialSentimentAnalysis, list[str]]:
+    """
+    Call LLM for social sentiment, parse, validate. Returns (analysis, warnings).
+    On any failure returns (empty_social_analysis, [warning_message]) — never raises.
+    """
+    warnings: list[str] = []
+    try:
+        raw_text = await client.complete(prompt, max_tokens=1500)
+        analysis = _parse_and_validate_social(raw_text, symbol, model)
+        logger.info(
+            "social_llm_analysis_ok",
+            symbol=symbol,
+            model=model,
+            sentiment=analysis.overall_sentiment,
+            penalty=analysis.confidence_penalty,
+        )
+        return analysis, warnings
+    except LLMError as exc:
+        msg = f"Social LLM call failed for {symbol}: {exc.message}"
+        logger.warning("social_llm_analysis_failed", symbol=symbol, error=exc.message)
+        warnings.append(msg)
+    except LLMParseError as exc:
+        msg = f"Social LLM parse failed for {symbol}: {exc.message}"
+        logger.warning("social_llm_parse_failed", symbol=symbol, error=exc.message)
+        warnings.append(msg)
+    except Exception as exc:
+        msg = f"Unexpected social LLM error for {symbol}: {exc}"
+        logger.warning("social_llm_analysis_unexpected", symbol=symbol, error=str(exc))
+        warnings.append(msg)
+
+    return empty_social_analysis(symbol, model), warnings
