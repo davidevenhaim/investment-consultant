@@ -114,6 +114,7 @@ async def test_score_breakdown_json_with_fake_llm_enabled(db_session, fake_memor
             memory_store=None,
             llm_client=None,
             news_provider=None,
+            social_provider=None,
         ):
             return real_build(
                 session,
@@ -122,6 +123,7 @@ async def test_score_breakdown_json_with_fake_llm_enabled(db_session, fake_memor
                 memory_store=memory_store,
                 llm_client=fake_llm,
                 news_provider=news_provider,
+                social_provider=social_provider,
             )
 
         mock_build.side_effect = build_with_llm

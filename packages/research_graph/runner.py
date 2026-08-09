@@ -12,6 +12,7 @@ from fundamentals.interfaces import FundamentalsProvider
 from market_data.interfaces import MarketDataProvider
 from memory.interfaces import MemoryStore
 from news.interfaces import NewsProvider
+from social.interfaces import SocialProvider
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from research_graph.graph import build_graph_for_session
@@ -31,6 +32,9 @@ _DEFAULT_SCORING_CONFIG: dict[str, Any] = {
         "portfolio_fit": 15,
     },
     "stub_scores": {"news": 5, "portfolio_fit": 7},
+    # When social sentiment data is present, the news component becomes a
+    # weighted blend of the news score and the social score (both 0-15).
+    "sentiment_blend": {"news": 0.7, "social": 0.3},
     "action_thresholds": {
         "strong_buy": 85,
         "buy_candidate": 70,
@@ -96,6 +100,9 @@ def make_initial_state(
         news_items=[],
         news_score_result=None,
         news_analysis=None,
+        social_posts=[],
+        social_score_result=None,
+        social_llm_analysis=None,
         broker_account_id=str(broker_account_id) if broker_account_id is not None else None,
         enforce_broker_scope=enforce_broker_scope,
         portfolio_context=None,
@@ -138,6 +145,7 @@ async def run_research_for_run(
     memory_store: MemoryStore | None = None,
     llm_client: LLMClient | None = None,
     news_provider: NewsProvider | None = None,
+    social_provider: SocialProvider | None = None,
     broker_account_id: uuid.UUID | str | None = None,
     enforce_broker_scope: bool = False,
     as_of_date: date | str | None = None,
@@ -157,7 +165,13 @@ async def run_research_for_run(
         strategy_config = _DEFAULT_SCORING_CONFIG
 
     graph = build_graph_for_session(
-        session, market_provider, fundamentals_provider, memory_store, llm_client, news_provider
+        session,
+        market_provider,
+        fundamentals_provider,
+        memory_store,
+        llm_client,
+        news_provider,
+        social_provider,
     )
     results: dict[str, Any] = {"symbols_completed": [], "symbols_failed": [], "errors": []}
 

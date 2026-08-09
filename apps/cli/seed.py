@@ -32,6 +32,7 @@ _STRATEGY_SCORING_CONFIG: dict[str, Any] = {
         "news": 5,
         "portfolio_fit": 7,
     },
+    "sentiment_blend": {"news": 0.7, "social": 0.3},
     "action_thresholds": {
         "strong_buy": 85,
         "buy_candidate": 70,
@@ -210,6 +211,7 @@ async def seed() -> None:
             needs_update = (
                 "action_thresholds" not in existing_cfg
                 or current_news_stub != _STRATEGY_SCORING_CONFIG["stub_scores"]["news"]
+                or "sentiment_blend" not in existing_cfg
             )
             if needs_update:
                 existing_sv.scoring_config_json = _STRATEGY_SCORING_CONFIG

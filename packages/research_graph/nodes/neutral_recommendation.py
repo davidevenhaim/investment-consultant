@@ -372,6 +372,22 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
 
         news_score = float(stub_scores.get("news", _NO_DATA_SCORE))
 
+    # Social sentiment blend: when BOTH news and social have real data, the news
+    # component becomes a weighted blend of the two (both 0-15, so the 0-100
+    # total and component weights are unchanged). Social alone never replaces
+    # the news stub — it is recorded in the breakdown but not blended.
+    social_score_result: Any = state.get("social_score_result")
+    social_available = social_score_result is not None and not bool(social_score_result.no_data)
+    social_score = float(social_score_result.score) if social_score_result is not None else 0.0
+    social_blend_applied = False
+    news_has_data = news_score_result is not None and not bool(news_score_result.no_data)
+    if social_available and news_has_data:
+        blend = strategy_config.get("sentiment_blend") or {}
+        w_news = float(blend.get("news", 0.7))
+        w_social = float(blend.get("social", 0.3))
+        news_score = w_news * news_score + w_social * social_score
+        social_blend_applied = True
+
     try:
         tech = _technical_score(signals)
         risk = _risk_score(signals)
@@ -381,10 +397,15 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
         raw = tech + risk + fund + val + news_score + portfolio_fit_stub
         total = round(min(100.0, max(0.0, raw)))
 
-        news_available = news_score_result is not None and not news_score_result.no_data
+        news_available = news_has_data
         completed, missing, completeness, scope = _build_completeness(
             signals or None, fundamentals, fdq, market_dq, news_available=news_available
         )
+        # Social is additive-only: recorded when present, but never added to
+        # missing_components — that would retroactively lower completeness (and
+        # potentially cap actions) on runs/replays predating social ingestion.
+        if social_available:
+            completed.append("social")
 
         # Component quality scores
         component_quality: dict[str, float] = {
@@ -392,6 +413,7 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             "technical_signals": 1.0 if signals else 0.0,
             "fundamentals": fdq,
             "news": 0.0,
+            "social": 1.0 if social_available else 0.0,
             "portfolio_context": 0.0,
         }
 
@@ -400,6 +422,8 @@ def neutral_recommendation(state: ResearchState) -> dict[str, Any]:
             fundamental_score=round(fund, 2),
             valuation_score=round(val, 2),
             news_score=round(news_score, 2),
+            social_score=round(social_score, 2),
+            social_blend_applied=social_blend_applied,
             portfolio_fit_score=portfolio_fit_stub,
             risk_score=round(risk, 2),
             total_score=float(total),

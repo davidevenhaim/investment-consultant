@@ -46,6 +46,7 @@ def _graph(
     ms: FakeMemoryStore | None = None,
 ) -> object:
     from news.fake_provider import FakeNewsProvider
+    from social.fake_provider import FakeSocialProvider
 
     return build_graph_for_session(
         session,
@@ -53,7 +54,27 @@ def _graph(
         fundamentals_provider=fp,
         memory_store=ms or FakeMemoryStore(),
         news_provider=FakeNewsProvider(),
+        social_provider=FakeSocialProvider(),
     )
+
+
+@pytest.mark.asyncio
+async def test_full_graph_applies_social_blend(
+    db_session: AsyncSession,
+    market_provider: "MockProvider",
+    fund_provider: "MockFundamentalsProvider",
+) -> None:
+    """Fake news + fake social both have AAPL data → blend applied in breakdown."""
+    run, ticker = await _make_run_and_ticker(db_session, "AAPL")
+    graph = _graph(db_session, market_provider, fund_provider)
+    final = await graph.ainvoke(make_initial_state(run, ticker, "v0.1.0"))
+
+    bd = final["score_breakdown"]
+    assert bd.social_blend_applied is True
+    assert 0.0 <= bd.social_score <= 15.0
+    assert "social" in final["completed_components"]
+    assert "social" not in final["missing_components"]
+    assert len(final["social_posts"]) == 3
 
 
 @pytest.mark.asyncio

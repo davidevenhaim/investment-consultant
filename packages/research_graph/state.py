@@ -19,6 +19,10 @@ class ScoreBreakdown(BaseModel):
     fundamental_score: float = 0.0
     valuation_score: float = 0.0
     news_score: float = 0.0  # stub until M8
+    # Social sentiment (0-15). When social data is present the news component is a
+    # weighted blend of news + social (see sentiment_blend in strategy config).
+    social_score: float = 0.0
+    social_blend_applied: bool = False
     portfolio_fit_score: float = 0.0  # stub until M9
     risk_score: float = 0.0
     total_score: float = 0.0
@@ -153,6 +157,11 @@ class ResearchState(TypedDict):
     news_items: list[dict[str, Any]]
     news_score_result: Any  # NewsScoreResult | None — deferred import
     news_analysis: NewsAnalysis | None
+
+    # ── social sentiment ─────────────────────────────────────────────────────
+    social_posts: list[dict[str, Any]]
+    social_score_result: Any  # SocialScoreResult | None — deferred import
+    social_llm_analysis: Any  # SocialSentimentAnalysis | None — deferred import
 
     # ── LLM outputs (M7+) ───────────────────────────────────────────────────
     thesis_comparison: ThesisComparison | None

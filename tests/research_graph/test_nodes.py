@@ -850,3 +850,83 @@ def test_personalized_no_portfolio_context_uses_defaults():
     rec = result["personalized_rec"]
     # HOLD + no position (current_quantity=0 default) → WATCHLIST
     assert rec.personal_action == RecommendationAction.WATCHLIST
+
+
+# ── social sentiment blend (news component = 0.7*news + 0.3*social) ──────────
+
+
+def _social_state(
+    news_score: float | None = 12.0,
+    social_score: float | None = 6.0,
+    news_no_data: bool = False,
+    social_no_data: bool = False,
+    blend_config: dict | None = None,
+) -> ResearchState:
+    from news.schemas import NewsScoreResult
+    from social.schemas import SocialScoreResult
+
+    state = _base_state("AAPL")
+    state["technical_signals"] = _signals_bullish()
+    state["fundamentals_snapshot"] = _make_snapshot("AAPL")
+    state["fundamentals_data_quality"] = 1.0
+    if news_score is not None:
+        state["news_score_result"] = NewsScoreResult(
+            score=news_score, no_data=news_no_data, reason="test"
+        )
+    if social_score is not None:
+        state["social_score_result"] = SocialScoreResult(
+            score=social_score, no_data=social_no_data, reason="test"
+        )
+    if blend_config is not None:
+        state["strategy_config"] = {"sentiment_blend": blend_config}
+    return state
+
+
+def test_social_blend_applied_when_both_have_data() -> None:
+    result = neutral_recommendation(_social_state(news_score=12.0, social_score=6.0))
+    bd = result["score_breakdown"]
+    assert bd.social_blend_applied is True
+    assert bd.news_score == pytest.approx(0.7 * 12.0 + 0.3 * 6.0, abs=0.01)
+    assert bd.social_score == pytest.approx(6.0, abs=0.01)
+    assert "social" in bd.completed_components
+    assert "social" not in bd.missing_components
+
+
+def test_social_blend_skipped_when_social_no_data() -> None:
+    baseline = neutral_recommendation(_social_state(news_score=12.0, social_score=None))
+    with_stub = neutral_recommendation(
+        _social_state(news_score=12.0, social_score=5.0, social_no_data=True)
+    )
+    bd = with_stub["score_breakdown"]
+    assert bd.social_blend_applied is False
+    assert bd.news_score == pytest.approx(12.0, abs=0.01)
+    # Score unchanged vs pre-feature behavior
+    assert with_stub["neutral_rec"].score == baseline["neutral_rec"].score
+    assert "social" not in bd.completed_components
+
+
+def test_social_blend_skipped_when_news_no_data() -> None:
+    result = neutral_recommendation(
+        _social_state(news_score=5.0, news_no_data=True, social_score=10.0)
+    )
+    bd = result["score_breakdown"]
+    assert bd.social_blend_applied is False
+    assert bd.news_score == pytest.approx(5.0, abs=0.01)
+    assert bd.social_score == pytest.approx(10.0, abs=0.01)  # recorded, not blended
+
+
+def test_social_blend_override_weights_from_strategy_config() -> None:
+    result = neutral_recommendation(
+        _social_state(
+            news_score=10.0, social_score=0.0, blend_config={"news": 0.5, "social": 0.5}
+        )
+    )
+    bd = result["score_breakdown"]
+    assert bd.social_blend_applied is True
+    assert bd.news_score == pytest.approx(5.0, abs=0.01)
+
+
+def test_social_blend_total_score_within_bounds() -> None:
+    result = neutral_recommendation(_social_state(news_score=15.0, social_score=15.0))
+    rec = result["neutral_rec"]
+    assert 0 <= rec.score <= 100

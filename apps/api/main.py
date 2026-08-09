@@ -22,6 +22,7 @@ from apps.api.routers import (
     recommendations,
     research_runs,
     risk_profile,
+    social,
     watchlist,
 )
 
@@ -103,6 +104,7 @@ app.include_router(market_data.router, prefix="/api/v1")
 app.include_router(fundamentals.router, prefix="/api/v1")
 app.include_router(memory.router, prefix="/api/v1")
 app.include_router(news.router, prefix="/api/v1")
+app.include_router(social.router, prefix="/api/v1")
 app.include_router(portfolio.router, prefix="/api/v1")
 app.include_router(backtesting.router, prefix="/api/v1")
 

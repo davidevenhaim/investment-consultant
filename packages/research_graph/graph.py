@@ -12,12 +12,14 @@ from langgraph.graph import END, StateGraph
 from market_data.interfaces import MarketDataProvider
 from memory.interfaces import MemoryStore
 from news.interfaces import NewsProvider
+from social.interfaces import SocialProvider
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from research_graph.nodes.compute_signals import make_compute_signals
 from research_graph.nodes.fetch_fundamentals import make_fetch_fundamentals
 from research_graph.nodes.fetch_market_data import make_fetch_market_data
 from research_graph.nodes.fetch_news import make_fetch_news
+from research_graph.nodes.fetch_social import make_fetch_social
 from research_graph.nodes.llm_analysis import make_llm_analysis
 from research_graph.nodes.load_portfolio_context import make_load_portfolio_context
 from research_graph.nodes.load_ticker_context import load_ticker_context
@@ -25,6 +27,7 @@ from research_graph.nodes.neutral_recommendation import neutral_recommendation
 from research_graph.nodes.persist_results import make_persist_results
 from research_graph.nodes.personalized_recommendation import personalized_recommendation
 from research_graph.nodes.retrieve_memory import make_retrieve_memory
+from research_graph.nodes.social_llm_analysis import make_social_llm_analysis
 from research_graph.state import ResearchState
 
 
@@ -35,21 +38,25 @@ def build_graph_for_session(
     memory_store: MemoryStore | None = None,
     llm_client: LLMClient | None = None,
     news_provider: NewsProvider | None = None,
+    social_provider: SocialProvider | None = None,
 ) -> Any:
     """
     Compile research graph with DB session bound into all DB-dependent nodes.
     All providers may be injected for testing; defaults to live implementations.
 
-    Graph (M9):
+    Graph:
     LoadTickerContext → RetrieveMemory → FetchMarketData → ComputeSignals
-    → FetchFundamentals → FetchNews → LLMAnalysis → NeutralRecommendation
-    → LoadPortfolioContext → PersonalizedRecommendation → PersistResults
+    → FetchFundamentals → FetchNews → FetchSocial → SocialLLMAnalysis
+    → LLMAnalysis → NeutralRecommendation → LoadPortfolioContext
+    → PersonalizedRecommendation → PersistResults
     """
     fetch_fn: Any = make_fetch_market_data(session, market_provider)
     signals_fn: Any = make_compute_signals(session, market_provider)
     fundamentals_fn: Any = make_fetch_fundamentals(session, fundamentals_provider)
     news_fn: Any = make_fetch_news(session, news_provider)
+    social_fn: Any = make_fetch_social(session, social_provider)
     retrieve_fn: Any = make_retrieve_memory(store=memory_store)
+    social_llm_fn: Any = make_social_llm_analysis(session, llm_client=llm_client)
     llm_fn: Any = make_llm_analysis(session, llm_client=llm_client)
     portfolio_fn: Any = make_load_portfolio_context(session)
     persist_fn: Any = make_persist_results(session, memory_store=memory_store)
@@ -62,6 +69,8 @@ def build_graph_for_session(
     builder.add_node("compute_signals", signals_fn)
     builder.add_node("fetch_fundamentals", fundamentals_fn)
     builder.add_node("fetch_news", news_fn)
+    builder.add_node("fetch_social", social_fn)
+    builder.add_node("social_llm_analysis", social_llm_fn)
     builder.add_node("llm_analysis", llm_fn)
     builder.add_node("neutral_recommendation", neutral_recommendation)
     builder.add_node("load_portfolio_context", portfolio_fn)
@@ -74,7 +83,9 @@ def build_graph_for_session(
     builder.add_edge("fetch_market_data", "compute_signals")
     builder.add_edge("compute_signals", "fetch_fundamentals")
     builder.add_edge("fetch_fundamentals", "fetch_news")
-    builder.add_edge("fetch_news", "llm_analysis")
+    builder.add_edge("fetch_news", "fetch_social")
+    builder.add_edge("fetch_social", "social_llm_analysis")
+    builder.add_edge("social_llm_analysis", "llm_analysis")
     builder.add_edge("llm_analysis", "neutral_recommendation")
     builder.add_edge("neutral_recommendation", "load_portfolio_context")
     builder.add_edge("load_portfolio_context", "personalized_recommendation")
