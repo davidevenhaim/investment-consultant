@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://host.docker.internal:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_timeout_seconds: int = 60
+    # Research-graph LLM routing. "anthropic" = Claude API, "ollama" = local model.
+    # ollama_research_model is separate from ollama_model so the backtest analyst
+    # keeps its own (smaller) model.
+    llm_provider: Literal["anthropic", "ollama"] = "anthropic"
+    ollama_research_model: str = "qwen3:32b"
+    ollama_research_timeout_seconds: int = 120
 
     # News
     newsapi_key: str = ""

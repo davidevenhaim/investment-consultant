@@ -25,8 +25,15 @@ class OllamaClient:
         self._model = model
         self._timeout = timeout
 
-    async def chat_json(self, messages: list[OllamaMessage]) -> dict[str, Any]:
+    async def chat_json(
+        self,
+        messages: list[OllamaMessage],
+        think: bool | None = None,
+    ) -> dict[str, Any]:
         """POST to /api/chat with format=json. Returns parsed dict.
+
+        ``think=False`` disables thinking mode on models like qwen3 — thinking
+        output conflicts with format=json.
 
         Raises:
             OllamaConnectionError: Ollama unreachable or returned HTTP error.
@@ -38,6 +45,8 @@ class OllamaClient:
             "stream": False,
             "format": "json",
         }
+        if think is not None:
+            payload["think"] = think
         try:
             async with httpx.AsyncClient(timeout=float(self._timeout)) as http:
                 resp = await http.post(f"{self._base_url}/api/chat", json=payload)

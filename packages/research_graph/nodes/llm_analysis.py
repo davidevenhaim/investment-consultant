@@ -31,25 +31,35 @@ def make_llm_analysis(
         symbol = state["symbol"]
         settings = get_settings()
 
-        # Resolve client: injected (for tests) takes priority; fall back to settings
+        # Resolve client: injected (for tests) takes priority; fall back to settings.
+        # llm_provider routes between the Claude API and a local Ollama model.
         client = llm_client
+        model = settings.llm_model
         if client is None:
             if not settings.llm_enabled:
                 logger.info("llm_analysis_skipped_disabled", symbol=symbol)
                 return _disabled_result(symbol)
-            if not settings.anthropic_api_key:
-                logger.warning("llm_analysis_skipped_no_key", symbol=symbol)
-                return _disabled_result(symbol)
-            from ai.client import AnthropicLLMClient
+            if settings.llm_provider == "ollama":
+                from ai.ollama_llm_client import OllamaLLMClient
 
-            client = AnthropicLLMClient(
-                api_key=settings.anthropic_api_key,
-                model=settings.llm_model,
-                timeout_seconds=settings.llm_timeout_seconds,
-                max_retries=settings.llm_max_retries,
-            )
+                model = settings.ollama_research_model
+                client = OllamaLLMClient(
+                    base_url=settings.ollama_base_url,
+                    model=model,
+                    timeout_seconds=settings.ollama_research_timeout_seconds,
+                )
+            else:
+                if not settings.anthropic_api_key:
+                    logger.warning("llm_analysis_skipped_no_key", symbol=symbol)
+                    return _disabled_result(symbol)
+                from ai.client import AnthropicLLMClient
 
-        model = settings.llm_model
+                client = AnthropicLLMClient(
+                    api_key=settings.anthropic_api_key,
+                    model=settings.llm_model,
+                    timeout_seconds=settings.llm_timeout_seconds,
+                    max_retries=settings.llm_max_retries,
+                )
 
         # Load active prompt version from DB
         prompt_version_id: str | None = None
