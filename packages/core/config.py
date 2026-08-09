@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     news_timeout_seconds: int = 20
     news_max_retries: int = 2
 
+    # Social sentiment (StockTwits API + host-scraped X posts)
+    social_enabled: bool = False
+    social_provider: str = "stocktwits"
+    social_lookback_days: int = 7
+    social_max_posts_per_symbol: int = 30
+    social_timeout_seconds: int = 10
+    # X scraping runs on the host (apps/cli/scrape_x.py), never inside the graph
+    x_scrape_enabled: bool = False
+    x_scrape_accounts: str = ""  # comma-separated handles, e.g. "chartwatch,stockguru"
+    x_scrape_min_delay_seconds: int = 5
+    x_session_state_path: str = ""  # Playwright storage_state JSON (logged-in session)
+
     # Scheduled research (Celery beat, twice-daily)
     scheduled_research_enabled: bool = False
     # UUID of the user that owns scheduled runs in dev; override per-user later
