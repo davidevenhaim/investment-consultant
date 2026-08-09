@@ -33,6 +33,7 @@ __all__ = [
     "MarketPrice",
     "CompanyFundamentals",
     "NewsItem",
+    "SocialPost",
     "BrokerAccount",
     "PortfolioAccount",
     "PortfolioPosition",
@@ -157,6 +158,38 @@ class NewsItem(Base, UUIDMixin, TimestampMixin):
     sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     importance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_duplicate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class SocialPost(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "social_posts"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "provider",
+            "provider_post_id",
+            name="uq_social_symbol_provider_post",
+        ),
+        Index("ix_social_posts_symbol", "symbol"),
+        Index("ix_social_posts_posted_at", "posted_at"),
+        Index("ix_social_posts_provider", "provider"),
+    )
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    provider_post_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    author_handle: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    posted_at: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(PGTIMESTAMP(timezone=True), nullable=False)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    likes_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reposts_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    replies_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_duplicate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
