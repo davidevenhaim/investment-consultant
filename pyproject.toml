@@ -43,6 +43,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# X scraping runs on the host only (apps/cli/scrape_x.py) — never install in
+# the worker/api Docker images (they have no browser binaries).
+social = ["playwright>=1.44"]
 dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",

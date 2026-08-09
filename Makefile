@@ -1,4 +1,4 @@
-.PHONY: up down migrate migrate-local seed seed-advisor-scenario test test-integration lint format logs shell-api run build venv install memory-reset-dev trigger-scheduled-research
+.PHONY: up down migrate migrate-local seed seed-advisor-scenario scrape-x test test-integration lint format logs shell-api run build venv install memory-reset-dev trigger-scheduled-research
 
 PYTHON    := python3.12
 VENV      := .venv
@@ -39,6 +39,10 @@ seed-local:
 
 seed-advisor-scenario: $(VENV)
 	PYTHONPATH=$(PYTHONPATH) $(BIN)/python -m apps.cli.seed_advisor_scenario --reset
+
+# Host-only: needs `pip install -e ".[social]" && playwright install chromium`
+scrape-x: $(VENV)
+	PYTHONPATH=$(PYTHONPATH) $(BIN)/python -m apps.cli.scrape_x --symbols $(SYMBOLS)
 
 test: $(VENV)
 	PYTHONPATH=$(PYTHONPATH) $(BIN)/pytest tests/ -v --cov=packages --cov=apps --cov-report=term-missing -m "not integration"
